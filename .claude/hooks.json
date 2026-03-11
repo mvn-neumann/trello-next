@@ -1,0 +1,20 @@
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": {
+        "tool": ["Edit", "Write"]
+      },
+      "command": "./.claude/hooks/check-branch.sh",
+      "description": "Ensure proper git branch before making file changes"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": {
+        "tool": ["Bash"]
+      },
+      "command": "./.claude/hooks/check-git-ops.sh",
+      "description": "Enforce git workflow: commits only on fix/feature branches, merges require approval"
+    }
+  ]
+}
