@@ -185,7 +185,7 @@ If the branch already exists, append a numeric suffix (e.g., `-2`, `-3`) and re-
 Check if a plan file already exists for the selected card. The plan file uses the same slug as the branch name from Step 5:
 
 ```bash
-ls .claude/plans/<branch-name>.md 2>/dev/null
+ls .plans/<branch-name>.md 2>/dev/null
 ```
 
 **If a plan file exists for this card:**
@@ -203,7 +203,7 @@ ls .claude/plans/<branch-name>.md 2>/dev/null
    ## Resuming: <card title>
 
    **Trello:** <card URL>
-   **Plan file:** .claude/plans/<branch-name>.md
+   **Plan file:** .plans/<branch-name>.md
 
    ### Implementation status
    - [x] 1. Step one — done (commit abc1234)
@@ -255,11 +255,11 @@ Show the user a concise summary:
 
 Write the plan to a persistent file so it can be resumed in a fresh session without re-fetching from Trello.
 
-**File path:** `.claude/plans/<branch-name>.md`
+**File path:** `.plans/<branch-name>.md`
 
 The plan file uses the branch name from Step 5 as the filename (e.g., `fix-newsletter-popup-spelling-error-507f1f77.md`). This makes plan files human-readable when browsing the directory.
 
-Create the `.claude/plans/` directory if it doesn't exist. The file must be self-describing — it contains all context needed to resume work.
+Create the `.plans/` directory if it doesn't exist. The file must be self-describing — it contains all context needed to resume work.
 
 Write the following content to the plan file:
 

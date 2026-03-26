@@ -130,7 +130,7 @@ Check if `.claude/trello-active-card.json` exists. If it does:
 6. Delete the state file and the plan file:
    ```bash
    rm .claude/trello-active-card.json
-   rm .claude/plans/<branchName>.md 2>/dev/null
+   rm .plans/<branchName>.md 2>/dev/null
    ```
 
 If the file does not exist, or the Trello MCP is not available, skip this step silently — it just means this task wasn't started via `/trello-next`.

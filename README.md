@@ -83,7 +83,7 @@ Add these to your project's `.gitignore` — they are generated at runtime:
 
 ```gitignore
 .claude/trello-active-card.json
-.claude/plans/
+.plans/
 ```
 
 ## Trello Board Layout
@@ -115,7 +115,7 @@ Claude will:
 3. Pick the oldest unassigned card if none are assigned
 4. Fetch full card details (description, checklists, attachments, comments)
 5. Analyze the issue and produce an implementation plan
-6. Save the plan to `.claude/plans/<branch-name>.md` for resumability
+6. Save the plan to `.plans/<branch-name>.md` for resumability
 7. Move the card to the in-progress list
 8. Offer to create a branch and start implementing
 
