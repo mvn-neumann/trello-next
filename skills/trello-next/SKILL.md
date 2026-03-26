@@ -138,10 +138,30 @@ Collect:
 - **Labels** (color + name)
 - **Due date** (if set)
 - **Checklists** — list all items and their completion state
-- **Attachments** — note any linked images or files
+- **Attachments** — note any linked images or files. For each image attachment (`mimeType` starts with `image/`), collect the download URL from the `url` field.
 - **Comments** — all comment texts
 - **Card URL** (`url` or `shortUrl`) — the link to the card on Trello
 - **Card author username** — from `idMemberCreator`, match against board members to get the Trello username. Save this for the state file in Step 10b.
+
+#### Step 4b: Download image attachments
+
+If the card has image attachments (`mimeType` starts with `image/`), download them so they can be viewed inline during analysis.
+
+**Authentication:** Trello file downloads require an OAuth `Authorization` header — query-param auth (`?key=&token=`) does **not** work for download URLs. Read the Trello API key and token from the environment variables `TRELLO_API_KEY` and `TRELLO_TOKEN`. If they are not set in the environment, extract them from the MCP server launch script (`.claude/scripts/trello-mcp.sh`) or from `.env` / `_ss_environment.php` in the project root using the same resolution order as the MCP script.
+
+**Download each image attachment:**
+
+```bash
+curl -s -o /tmp/trello-<cardId>-<attachmentId>.<ext> \
+  -H 'Authorization: OAuth oauth_consumer_key="<TRELLO_API_KEY>", oauth_token="<TRELLO_TOKEN>"' \
+  "<attachment url>"
+```
+
+Where `<ext>` is derived from the `mimeType` (e.g., `image/png` → `png`, `image/webp` → `webp`, `image/jpeg` → `jpg`).
+
+After downloading, **read each image file** using the `Read` tool so the image is displayed inline in the conversation. This allows both the AI and the user to see screenshots, mockups, or reference images attached to the card.
+
+If a download fails (non-zero exit code or the resulting file is not a valid image), skip it silently and note the attachment URL in the plan file for manual review.
 
 ### Step 5: Derive branch name
 
