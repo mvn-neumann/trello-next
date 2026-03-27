@@ -29,7 +29,11 @@ There are two paths through this skill depending on whether a plan file already 
 
 ### Step 1: Fetch board data, identify user, and resolve default branch (parallel)
 
-Make these four calls **in parallel** (they have no dependencies on each other):
+First, **check the cache**. Read `.claude/trello-active-card.json` (it may exist from a previous run). If it exists AND contains both `lists` (non-empty array) and `boardMembers` (non-empty array) AND `cachedAt` is less than 1 hour ago:
+- Use the cached `lists` and `boardMembers` directly - skip the `get_lists` and `get_board_members` MCP calls.
+- Only run calls 2 and 4 below (git user name + git config).
+
+Otherwise, make these four calls **in parallel** (they have no dependencies on each other):
 
 1. **Get all lists:**
    ```
@@ -82,6 +86,8 @@ Fetch all cards assigned to the current user (this is a lightweight call that av
 get_my_cards
 ```
 
+**Response hygiene:** This call can return large payloads (full card objects across all boards). After receiving the response, extract only `id`, `name`, and `idList` from each card. Discard all other fields - do not retain descriptions, checklists, or attachments from this call.
+
 Filter the results by `idList` to separate:
 - **My in-progress cards** — cards where `idList` matches the in-progress list ID
 - **My to-do cards** — cards where `idList` matches the To-Do list ID
@@ -113,6 +119,8 @@ Use `AskUserQuestion` with options for each of the user's in-progress cards plus
 ```
 get_cards_by_list_id  listId: <to-do list id>
 ```
+
+**Response hygiene:** This call returns full card objects for every card in the list. After receiving the response, extract only `id`, `name`, and `idMembers` from each card. Discard all other fields immediately - do not retain full descriptions, checklists, or attachments from this list call.
 
 Filter for **unassigned cards only** — cards with empty `idMembers`. Sort by `id` ascending (oldest first). Pick the oldest one. Save its `id` and `name`.
 
@@ -315,11 +323,15 @@ If the To-Do list is the last list on the board (no list after it), skip the mov
   "reviewListName": "<review list name or null>",
   "lists": [
     { "id": "...", "name": "...", "pos": 123 }
-  ]
+  ],
+  "boardMembers": [
+    { "id": "...", "fullName": "...", "username": "..." }
+  ],
+  "cachedAt": "<ISO 8601 timestamp, e.g. 2026-03-27T14:30:00Z>"
 }
 ```
 
-This file allows `/git-done` to move the card to the review list when work is complete. If `reviewListId` is `null`, `/git-done` falls back to the next list by position.
+This file allows `/git-done` to move the card to the review list when work is complete. If `reviewListId` is `null`, `/git-done` falls back to the next list by position. The `boardMembers` and `cachedAt` fields allow Step 1 to skip `get_lists` and `get_board_members` MCP calls when the cache is fresh (< 1 hour old).
 
 #### Step 10c: Resolve default branch (if not already known)
 
