@@ -149,21 +149,40 @@ Collect:
 
 If the card has image attachments (`mimeType` starts with `image/`), download them so they can be viewed inline during analysis.
 
+**Skip oversized attachments:** Trello's attachment object includes a `bytes` field. Skip any attachment larger than **10 MB** — note it in the plan file as "skipped (too large)" with its URL for manual review.
+
 **Authentication:** Trello file downloads require an OAuth `Authorization` header — query-param auth (`?key=&token=`) does **not** work for download URLs. Read the Trello API key and token from the environment variables `TRELLO_API_KEY` and `TRELLO_TOKEN`. If they are not set in the environment, extract them from the MCP server launch script (`.claude/scripts/trello-mcp.sh`) or from `.env` / `_ss_environment.php` in the project root using the same resolution order as the MCP script.
 
-**Download each image attachment:**
+**File extension mapping:** Derive `<ext>` from the `mimeType` using these conventions:
+
+| mimeType | ext |
+|----------|-----|
+| `image/png` | `png` |
+| `image/jpeg` | `jpg` |
+| `image/webp` | `webp` |
+| `image/gif` | `gif` |
+| `image/svg+xml` | `svg` |
+| other `image/*` | part after `/`, stripping any `+suffix` |
+
+**Download each image attachment in parallel** (multiple `Bash` calls in a single message):
 
 ```bash
-curl -s -o /tmp/trello-<cardId>-<attachmentId>.<ext> \
+curl -sf -o /tmp/trello-<cardId>-<attachmentId>.<ext> \
   -H 'Authorization: OAuth oauth_consumer_key="<TRELLO_API_KEY>", oauth_token="<TRELLO_TOKEN>"' \
   "<attachment url>"
 ```
 
-Where `<ext>` is derived from the `mimeType` (e.g., `image/png` → `png`, `image/webp` → `webp`, `image/jpeg` → `jpg`).
+The `-f` flag makes `curl` return a non-zero exit code on HTTP errors (401, 403, 404, etc.) instead of silently writing an error page to the output file.
 
 After downloading, **read each image file** using the `Read` tool so the image is displayed inline in the conversation. This allows both the AI and the user to see screenshots, mockups, or reference images attached to the card.
 
-If a download fails (non-zero exit code or the resulting file is not a valid image), skip it silently and note the attachment URL in the plan file for manual review.
+If a download fails (non-zero exit code), skip it silently and note the attachment URL in the plan file for manual review.
+
+**Cleanup:** After the plan file has been written (Step 9), delete the temporary files:
+
+```bash
+rm -f /tmp/trello-<cardId>-*.{png,jpg,webp,gif,svg}
+```
 
 ### Step 5: Derive branch name
 
