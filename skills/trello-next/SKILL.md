@@ -17,13 +17,15 @@ This skill fetches the oldest card from the Trello "To-Do" list, reads all its d
 
 There are two paths through this skill depending on whether a plan file already exists for the selected card:
 
-- **New card** — Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → user chooses:
+- **New card** — Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11 → user chooses:
   - **"Start implementing"** → create branch and begin work
   - **"Discuss the plan"** → wait for user input
   - **"Just the plan"** → stop here
 - **Resuming card with existing plan** — Steps 1 → 2 → 3 → 4 → 5 → 6 (check plan) → user chooses:
   - **"Continue"** → skip to Step 10 → 11
-  - **"Re-plan"** → continue with Steps 7 → 8 → 9 → 10 → 11
+  - **"Re-plan"** → continue with Steps 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11
+
+Steps 7–9 run inside **plan mode** (`EnterPlanMode` / `ExitPlanMode`). Plan mode restricts all tools to read-only operations (except writing to the plan mode designated file), enabling safe, thorough codebase exploration before committing to an implementation plan.
 
 ## Instructions
 
@@ -57,7 +59,7 @@ Make these four calls **in parallel** (they have no dependencies on each other):
 Save **all** lists with their `id`, `name`, and `pos` (position on the board), sorted by `pos` ascending. This ordered list is needed later to determine the "next" list for a card.
 
 Find these lists by name (case-insensitive) and save their `id`s:
-- **To-Do list** — matches any of: "Zu Erledigen", "Abzuarbeiten", "Offen"
+- **To-Do list** — matches any of: "To Do", "To-Do", "Zu Erledigen", "Abzuarbeiten", "Offen"
 - **In-Progress list** — matches any of: "In Bearbeitung", "In Arbeit". If no name matches, fall back to the list immediately after the To-Do list by `pos`.
 - **Review list** — matches any of: "Zur Prüfung", "Zur Prüfung durch Do it", "Review", "Prüfung". If no name matches, fall back to the list immediately after the In-Progress list by `pos`. If no list exists after In-Progress, leave this as `null`.
 
@@ -219,17 +221,33 @@ ls .plans/<branch-name>.md 2>/dev/null
 
 **If no plan file exists for this card:** Continue to Step 7.
 
-### Step 7: Analyze the issue
+### Step 7: Analyze the issue (enter plan mode)
 
-Read all collected data from Step 4 carefully. Identify:
+Call `EnterPlanMode` (no parameters). This activates plan mode, which:
+- Restricts all tools to **read-only** operations (except the plan mode designated file)
+- Assigns a plan file path (shown in a system message, e.g. `.claude/plans/<name>.md`)
+- Enables thorough codebase exploration before writing the plan
 
+**7a. Read all collected data** from Step 4 carefully.
+
+**7b. Explore the codebase** to validate assumptions and identify affected files. Use `Explore` agents (or Glob/Grep/Read directly) to investigate — in parallel where possible:
+- Search for files, components, or functions mentioned in the card description/comments
+- Trace the code paths that will need to change
+- Check for related tests, styles, templates, or configuration
+- Identify patterns in existing code that the implementation should follow
+
+**7c. Synthesize findings.** Based on the card data and codebase exploration, identify:
 - **What** needs to be done (the core task)
 - **Why** it matters (context from description/comments)
-- **Where** in the codebase it likely applies (based on labels, description keywords, and your knowledge of this project)
+- **Where** in the codebase it applies (specific files and functions found during exploration)
 - **Scope** — is this a bug fix, a new feature, a refactor, or a content update?
 - **Open questions** — anything ambiguous or missing from the card
 
+Plan mode remains active through Steps 8 and 9a.
+
 ### Step 8: Present the card summary
+
+**Note:** Plan mode is still active. Text output to the user is permitted — only file writes (other than to the plan mode designated file) are restricted.
 
 Show the user a concise summary:
 
@@ -251,17 +269,17 @@ Show the user a concise summary:
 > <most recent comment>
 ```
 
-### Step 9: Write implementation plan to file
+### Step 9: Write implementation plan and exit plan mode
 
-Write the plan to a persistent file so it can be resumed in a fresh session without re-fetching from Trello.
+This step has three phases: write the plan inside plan mode, exit plan mode for user review, then persist the plan to `.plans/`.
 
-**File path:** `.plans/<branch-name>.md`
+#### Step 9a: Write plan to plan mode file
 
-The plan file uses the branch name from Step 5 as the filename (e.g., `fix-newsletter-popup-spelling-error-507f1f77.md`). This makes plan files human-readable when browsing the directory.
+**Plan mode is still active.** Write the full plan content to the **plan mode designated file** (the path shown in the system message when `EnterPlanMode` was called in Step 7). This is the only file that can be written while plan mode is active.
 
-Create the `.plans/` directory if it doesn't exist. The file must be self-describing — it contains all context needed to resume work.
+The file must be self-describing — it contains all context needed to resume work.
 
-Write the following content to the plan file:
+Write the following content to the plan mode designated file:
 
 ```markdown
 # Plan: <card title>
@@ -307,7 +325,25 @@ Write the following content to the plan file:
 
 **Important:** Use `- [ ]` checkbox syntax for each step so that the plan-file check in Step 6 can later determine completion status by checking for `- [x]` vs `- [ ]`.
 
-After writing the file, also **output the Implementation Plan section to the user** so they can see it immediately.
+#### Step 9b: Exit plan mode
+
+Call `ExitPlanMode` (no parameters). This:
+- Ends the read-only restriction
+- Signals the user to **review and approve** the plan
+
+Wait for user approval before proceeding to Step 9c.
+
+#### Step 9c: Persist plan to `.plans/`
+
+After the user approves the plan, copy it to the persistent location so it can be resumed in a fresh session without re-fetching from Trello.
+
+**File path:** `.plans/<branch-name>.md`
+
+The plan file uses the branch name from Step 5 as the filename (e.g., `fix-newsletter-popup-spelling-error-507f1f77.md`). This makes plan files human-readable when browsing the directory.
+
+Create the `.plans/` directory if it doesn't exist. Copy the full contents of the plan mode designated file to `.plans/<branch-name>.md`.
+
+After writing the file, **output the Implementation Plan section to the user** so they can see it immediately (if not already visible from the plan mode review).
 
 ### Step 10: Move card and save state
 
@@ -384,7 +420,11 @@ Use `AskUserQuestion` to ask what the user wants to do next:
 - **"Just the plan"** — The user only wanted the analysis and plan. End the skill here — do not create a branch or start implementing.
 - **"Skip this card"** — The user wants to reject this card and pick a different one:
   1. Move the card back to its original list if it was moved in Step 10a.
-  2. Update the card's position to the **bottom** of the To-Do list so other cards get picked first: use `update_card_details` with `pos: "bottom"` (or set `pos` to a value higher than all other cards in the list).
+  2. Move the card to the **bottom** of the To-Do list so other cards get picked first. The `update_card_details` tool does not support `pos`, so use the Trello REST API directly:
+     ```bash
+     curl -s -X PUT "https://api.trello.com/1/cards/<card-id>?pos=bottom&key=<TRELLO_API_KEY>&token=<TRELLO_TOKEN>"
+     ```
+     Read the API key and token using the same credential resolution as Step 4b.
   3. Unassign the current user from the card (if they were assigned in Step 3).
   4. Delete the plan file if one was just created in Step 9.
   5. **Go back to Step 3** to pick the next card. Reuse the already-fetched card list from Step 3 — do not re-fetch from Trello. Just exclude the skipped card and pick the next oldest. If no cards remain, tell the user there are no more cards available.

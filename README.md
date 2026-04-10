@@ -92,7 +92,7 @@ The skill auto-detects lists by name (case-insensitive). Your board should have 
 
 | Role | Matched names |
 |------|--------------|
-| **To-Do** | "Zu Erledigen", "Abzuarbeiten", "Offen" |
+| **To-Do** | "To Do", "To-Do", "Zu Erledigen", "Abzuarbeiten", "Offen" |
 | **In-Progress** | "In Bearbeitung", "In Arbeit" (or the list after To-Do) |
 | **Review** | "Zur Prüfung", "Zur Prüfung durch Do it", "Review", "Prüfung" (or the list after In-Progress) |
 
