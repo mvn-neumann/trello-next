@@ -84,6 +84,7 @@ Add these to your project's `.gitignore` — they are generated at runtime:
 ```gitignore
 .claude/trello-active-card.json
 .plans/
+.reports/
 ```
 
 ## Trello Board Layout
@@ -129,6 +130,8 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 |-------|---------|-------------|
 | `/git-new` | Before file changes | Creates a `fix-*` or `feature-*` branch from the main branch |
 | `/git-done` | When work is complete | Merges the branch, pushes, and moves the Trello card to the next list |
+| `/qa-report` | After implementation, before `/git-done` | Takes screenshots of affected pages and generates a markdown QA report |
+| `/log-time` | Any time after starting a card | Analyzes git commits, estimates hours worked, and posts a `/spent` comment to the Trello card |
 
 ## What Gets Installed
 
@@ -139,8 +142,12 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 │   │   └── SKILL.md              # Main skill — card fetching, analysis, planning
 │   ├── git-new/
 │   │   └── SKILL.md              # Branch creation workflow
-│   └── git-done/
-│       └── SKILL.md              # Merge, push, and Trello card advancement
+│   ├── git-done/
+│   │   └── SKILL.md              # Merge, push, and Trello card advancement
+│   ├── qa-report/
+│   │   └── SKILL.md              # Screenshot-based QA verification and report
+│   └── log-time/
+│       └── SKILL.md              # Git-based time estimation posted to Trello
 └── scripts/
     └── trello-mcp.sh             # MCP launcher (reads creds from .env or _ss_environment.php)
 ```
