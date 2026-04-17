@@ -17,7 +17,7 @@ This skill fetches the oldest card from the Trello "To-Do" list, reads all its d
 
 There are two paths through this skill depending on whether a plan file already exists for the selected card:
 
-- **New card** — Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → user chooses:
+- **New card** — Steps 1 → 2 → 3 → 4 → 4b → 5 → 6 → 7 → 8 → 9 → 10 → 11 → user chooses:
   - **"Start implementing"** → create branch and begin work
   - **"Discuss the plan"** → wait for user input
   - **"Just the plan"** → stop here
@@ -150,6 +150,66 @@ Collect:
 - **Comments** — all comment texts
 - **Card URL** (`url` or `shortUrl`) — the link to the card on Trello
 - **Card author username** — from `idMemberCreator`, match against board members to get the Trello username. Save this for the state file in Step 10b.
+
+### Step 4b: Enrich card with Problem / Goal / Scope
+
+Check whether the card description already contains each of these three sections. Match **case-insensitively** against all of:
+
+- **Problem**: `## Problem`, `### Problem`, `**Problem**`, `Problem:`
+- **Goal**: `## Goal`, `### Goal`, `**Goal**`, `Goal:`, `## Ziel`, `### Ziel`, `**Ziel**`, `Ziel:`
+- **Scope**: `## Scope`, `### Scope`, `**Scope**`, `Scope:`, `## Umfang`, `### Umfang`, `**Umfang**`, `Umfang:`
+
+If the card has image attachments (`mimeType` starts with `image/`), download and view them first so their visual content informs the synthesis. Use the same OAuth-header approach as the canonical skill version (read `TRELLO_API_KEY` and `TRELLO_TOKEN` from environment):
+
+```bash
+curl -sf -o /tmp/trello-<cardId>-<attachmentId>.<ext> \
+  -H 'Authorization: OAuth oauth_consumer_key="<TRELLO_API_KEY>", oauth_token="<TRELLO_TOKEN>"' \
+  "<attachment url>"
+```
+
+After downloading, read each image file with the `Read` tool so its visual content is available for synthesis. Skip attachments larger than **10 MB** (`bytes` field on the attachment object).
+
+For each **missing** section, synthesize concise Markdown content from:
+- Card title and existing description
+- All comments (newest first)
+- Visual content of any downloaded image attachments (screenshots, mockups)
+
+Generated format:
+
+```markdown
+## Problem
+<1–3 sentences describing the current problem or pain point>
+
+## Goal
+<1–2 sentences describing the desired outcome / definition of done>
+
+## Scope
+<brief list of what's in scope; optionally note what's explicitly out of scope>
+```
+
+If **any** sections are missing, append the generated sections to the card description on Trello:
+
+```
+update_card_details  cardId: <card id>  desc: <existing description + "\n\n---\n\n" + generated sections>
+```
+
+- If the card has **no description at all**, use only the generated sections (no separator).
+- **Never modify or overwrite existing content** — only append.
+- After the update, refresh the local `desc` variable so subsequent analysis steps use the enriched description.
+
+Tell the user which sections were added, e.g.:
+```
+Added to card: ## Problem, ## Goal
+```
+
+If all three sections are already present, skip this step silently.
+
+**Error handling:** If `update_card_details` fails, log a warning and continue — enrichment is non-critical.
+
+**Cleanup:** Delete any temporary image files after this step completes:
+```bash
+rm -f /tmp/trello-<cardId>-*
+```
 
 ### Step 5: Derive branch name
 
@@ -315,6 +375,7 @@ If the To-Do list is the last list on the board (no list after it), skip the mov
   "cardUrl": "<card URL>",
   "branchName": "<branch name from Step 5>",
   "cardAuthorUsername": "<Trello username of the card creator from Step 4>",
+  "startedAt": "<ISO 8601 timestamp of when /trello-next picked up this card, e.g. 2026-04-17T11:30:00+02:00>",
   "sourceListId": "<list the card was in before /trello-next picked it up>",
   "sourceListName": "<name of that list>",
   "currentListId": "<list the card is currently in after Step 10a move>",

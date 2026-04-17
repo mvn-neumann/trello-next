@@ -17,7 +17,7 @@ This skill fetches the oldest card from the Trello "To-Do" list, reads all its d
 
 There are two paths through this skill depending on whether a plan file already exists for the selected card:
 
-- **New card** — Steps 1 → 2 → 3 → 4 → 5 → 6 → 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11 → user chooses:
+- **New card** — Steps 1 → 2 → 3 → 4 → 4c → 5 → 6 → 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11 → user chooses:
   - **"Start implementing"** → create branch and begin work
   - **"Discuss the plan"** → wait for user input
   - **"Just the plan"** → stop here
@@ -183,6 +183,51 @@ If a download fails (non-zero exit code), skip it silently and note the attachme
 ```bash
 rm -f /tmp/trello-<cardId>-*.{png,jpg,webp,gif,svg}
 ```
+
+### Step 4c: Enrich card with Problem / Goal / Scope
+
+Check whether the card description already contains each of these three sections. Match **case-insensitively** against all of:
+
+- **Problem**: `## Problem`, `### Problem`, `**Problem**`, `Problem:`, `## Problem`, `### Problem`
+- **Goal**: `## Goal`, `### Goal`, `**Goal**`, `Goal:`, `## Ziel`, `### Ziel`, `**Ziel**`, `Ziel:`
+- **Scope**: `## Scope`, `### Scope`, `**Scope**`, `Scope:`, `## Umfang`, `### Umfang`, `**Umfang**`, `Umfang:`
+
+For each **missing** section, synthesize concise Markdown content from all available card data collected in Step 4:
+- Card title and existing description
+- All comments (newest first)
+- Visual content of any downloaded image attachments (screenshots, mockups viewed in Step 4b)
+
+Generate the missing sections in this format:
+
+```markdown
+## Problem
+<1–3 sentences describing the current problem or pain point>
+
+## Goal
+<1–2 sentences describing the desired outcome / definition of done>
+
+## Scope
+<brief list of what's in scope; optionally note what's explicitly out of scope>
+```
+
+If **any** sections are missing, append the generated sections to the card description on Trello:
+
+```
+update_card_details  cardId: <card id>  desc: <existing description + "\n\n---\n\n" + generated sections>
+```
+
+- If the card has **no description at all**, use only the generated sections as the new description (no separator).
+- **Never modify or overwrite existing content** — only append.
+- After the update, refresh the local `desc` variable with the enriched content so Steps 7–9 (analysis and plan file) include it.
+
+Tell the user which sections were added, e.g.:
+```
+Added to card: ## Problem, ## Goal
+```
+
+If all three sections are already present, skip this step silently.
+
+**Error handling:** If `update_card_details` fails, log a warning and continue — enrichment is non-critical.
 
 ### Step 5: Derive branch name
 
@@ -394,6 +439,7 @@ If the To-Do list is the last list on the board (no list after it), warn the use
   "cardUrl": "<card URL>",
   "branchName": "<branch name from Step 5>",
   "cardAuthorUsername": "<Trello username of the card creator from Step 4>",
+  "startedAt": "<ISO 8601 timestamp of when /trello-next picked up this card, e.g. 2026-04-17T11:30:00+02:00>",
   "sourceListId": "<list the card was in before /trello-next picked it up>",
   "sourceListName": "<name of that list>",
   "currentListId": "<list the card is currently in after Step 10a move>",
