@@ -142,18 +142,21 @@ If there were previously logged hours:
   Logging now:       1.5 hours
 ```
 
-### Step 4: Confirm with user
+### Step 4: Review and confirm with user (hard gate)
 
-Show the breakdown from Step 3f, then use `AskUserQuestion`:
+Step 5 (posting to Trello) must **never** be reached before this step completes with an explicit user confirmation. If you have not yet rendered the breakdown and received an answer from `AskUserQuestion`, do not call `add_comment`.
 
-**Question:** "Log X.X hours to the Trello card?"
+1. Print the breakdown from Step 3f to the user as plain text. End it with the sentence:
+   `Please review the estimate. Are the sessions, dates, and total hours correct?`
+
+2. Then use `AskUserQuestion`:
+
+**Question:** "Log X.X hours to the Trello card? Please review the breakdown above first."
 
 **Options:**
-- **"Yes, log X.X hours"** — post the comment as-is
-- **"Adjust the hours"** — accept a free-text number from the user (e.g. "3.5"); use that value instead
-- **"Cancel"** — end the skill without posting anything
-
-If the user chooses "Adjust the hours", ask for the corrected value as free text, then confirm once more before posting.
+- **"Yes, log X.X hours"** — the user has reviewed and the estimate is correct; proceed to Step 5.
+- **"Adjust the hours"** — the estimate is wrong; ask the user for the corrected number as free text (e.g. "3.5"), then proceed directly to Step 5 with that value. **Do not** ask a second confirmation question after the user supplies the number.
+- **"Cancel"** — end the skill without posting anything.
 
 ### Step 5: Post comment to Trello
 
@@ -203,4 +206,4 @@ No active Trello card found. Here is the comment to paste manually:
 | No commits on branch | Exit early: "No commits found — nothing to estimate yet" |
 | `add_comment` MCP call fails | Show comment text for manual copy-paste |
 | Trello MCP unavailable | Show comment text for manual copy-paste |
-| User enters non-numeric hours | Re-ask for a valid number |
+| User enters non-numeric hours | Re-ask for a valid number (loop within Step 4's Adjust branch) |
