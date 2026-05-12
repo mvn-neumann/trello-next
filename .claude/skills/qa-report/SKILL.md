@@ -207,7 +207,7 @@ Write this content to the report file:
 
 <One sentence observation: what the screenshot shows, or what is wrong if Fail>
 
-![<check description>](screenshots/<branch-name>-<n>-<slug>.png)
+![<check description>](./screenshots/<branch-name>-<n>-<slug>.png)
 
 ---
 
