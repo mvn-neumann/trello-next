@@ -18,7 +18,7 @@ This skill fetches the oldest card from the Trello "To-Do" list, reads all its d
 There are two paths through this skill depending on whether a plan file already exists for the selected card:
 
 - **New card** — Steps 1 → 2 → 3 → 4 → 4c → 5 → 6 → 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11 → user chooses:
-  - **"Start implementing"** → create branch and begin work
+  - **"Start implementing"** → create branch, implement plan, then run `/qa-report`
   - **"Discuss the plan"** → wait for user input
   - **"Just the plan"** → stop here
 - **Resuming card with existing plan** — Steps 1 → 2 → 3 → 4 → 5 → 6 (check plan) → user chooses:
@@ -480,8 +480,8 @@ Use `AskUserQuestion` to ask what the user wants to do next:
 **Question:** "What would you like to do?"
 
 **Options:**
-- **"Start implementing"** — Run `/git-new <branch-name-from-step-5>` to create the branch, then immediately begin implementing the plan. No further user input needed.
-- **"Discuss the plan"** — Run `/git-new <branch-name-from-step-5>` to create the branch (since a plan file was already written), then wait for the user's input to discuss, clarify, or adjust the plan.
+- **"Start implementing"** — Run `/git-new <branch-name-from-step-5>` to create the branch, then immediately begin implementing the plan. Once every step in the plan's checklist is complete (and any uncommitted work is committed), invoke `/qa-report` to verify the changes in a browser before the user runs `/git-done`. No further user input needed during implementation.
+- **"Discuss the plan"** — Run `/git-new <branch-name-from-step-5>` to create the branch (since a plan file was already written), then wait for the user's input to discuss, clarify, or adjust the plan. After implementation eventually starts and finishes, invoke `/qa-report` before the user runs `/git-done`.
 - **"Just the plan"** — The user only wanted the analysis and plan. End the skill here — do not create a branch or start implementing.
 - **"Skip this card"** — The user wants to reject this card and pick a different one:
   1. Move the card back to its original list if it was moved in Step 10a.
