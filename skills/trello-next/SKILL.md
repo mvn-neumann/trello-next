@@ -184,15 +184,22 @@ If a download fails (non-zero exit code), skip it silently and note the attachme
 rm -f /tmp/trello-<cardId>-*.{png,jpg,webp,gif,svg}
 ```
 
-### Step 4c: Enrich card with Problem / Goal / Scope
+### Step 4c: Enrich card with Problem / Goal / Scope / Acceptance Criteria
 
-Check whether the card description already contains each of these three sections. Match **case-insensitively** against all of:
+#### 4c.1 — Detect missing sections
 
-- **Problem**: `## Problem`, `### Problem`, `**Problem**`, `Problem:`, `## Problem`, `### Problem`
+Check whether the card description already contains each of these four sections. Match **case-insensitively** against all of:
+
+- **Problem**: `## Problem`, `### Problem`, `**Problem**`, `Problem:`
 - **Goal**: `## Goal`, `### Goal`, `**Goal**`, `Goal:`, `## Ziel`, `### Ziel`, `**Ziel**`, `Ziel:`
 - **Scope**: `## Scope`, `### Scope`, `**Scope**`, `Scope:`, `## Umfang`, `### Umfang`, `**Umfang**`, `Umfang:`
+- **Acceptance Criteria**: `## Acceptance Criteria`, `### Acceptance Criteria`, `**Acceptance Criteria**`, `Acceptance Criteria:`, `## Akzeptanzkriterien`, `### Akzeptanzkriterien`, `**Akzeptanzkriterien**`, `Akzeptanzkriterien:`
 
-For each **missing** section, synthesize concise Markdown content from all available card data collected in Step 4:
+If **all four** sections are already present, skip this step silently.
+
+#### 4c.2 — Generate missing sections
+
+For each missing section, synthesize concise Markdown content from all available card data collected in Step 4:
 - Card title and existing description
 - All comments (newest first)
 - Visual content of any downloaded image attachments (screenshots, mockups viewed in Step 4b)
@@ -208,26 +215,63 @@ Generate the missing sections in this format:
 
 ## Scope
 <brief list of what's in scope; optionally note what's explicitly out of scope>
+
+## Acceptance Criteria
+- [ ] <testable outcome 1>
+- [ ] <testable outcome 2>
+- [ ] <testable outcome 3>
 ```
 
-If **any** sections are missing, append the generated sections to the card description on Trello:
+Acceptance Criteria must be **testable outcomes** (what the user or QA would verify), not implementation steps. Derive them from the Goal, Scope, and card comments. Keep the list short: 2–5 items.
+
+Only generate the sections that are missing — do not regenerate sections that already exist in the description.
+
+#### 4c.3 — Preview the proposed enrichment
+
+Print the **full proposed Markdown** in a fenced code block so the user can read it before anything is written to Trello. Prefix with the section names being added:
 
 ```
-update_card_details  cardId: <card id>  desc: <existing description + "\n\n---\n\n" + generated sections>
+The following sections will be appended to the Trello card:
+
+Missing sections: ## Problem, ## Goal, ## Scope, ## Acceptance Criteria
+
+---
+## Problem
+…
+
+## Goal
+…
+
+## Scope
+…
+
+## Acceptance Criteria
+- [ ] …
+---
 ```
 
-- If the card has **no description at all**, use only the generated sections as the new description (no separator).
-- **Never modify or overwrite existing content** — only append.
-- After the update, refresh the local `desc` variable with the enriched content so Steps 7–9 (analysis and plan file) include it.
+#### 4c.4 — Gate the Trello write with `AskUserQuestion`
 
-Tell the user which sections were added, e.g.:
-```
-Added to card: ## Problem, ## Goal
-```
+Ask the user what to do with these options:
 
-If all three sections are already present, skip this step silently.
+- **"Push to Trello"** — call `update_card_details` to append the generated sections to the card description:
+  ```
+  update_card_details  cardId: <card id>  desc: <existing description + "\n\n---\n\n" + generated sections>
+  ```
+  If the card has **no description at all**, use only the generated sections (no separator). After the write, confirm: `Added to card: ## Problem, ## Goal, ## Scope, ## Acceptance Criteria` (listing only the sections that were actually written).
 
-**Error handling:** If `update_card_details` fails, log a warning and continue — enrichment is non-critical.
+- **"Regenerate"** — prompt the user for guidance via the auto-provided "Other" free-text input (e.g. "Goal is wrong, it's actually X" or "remove Scope, just need Problem and Goal"). Re-synthesize the missing sections incorporating that guidance, then loop back to **Step 4c.3** to re-preview. Cap at **3 regeneration cycles** — if the user picks Regenerate a fourth time, fall through to "Skip enrichment" automatically and log: `Enrichment skipped after 3 regeneration attempts.`
+
+- **"Skip enrichment"** — do not write to Trello. Log: `Skipped card enrichment.`
+
+#### 4c.5 — Refresh local state
+
+In all three branches, refresh the local `desc` variable so subsequent steps (7–9) reflect the actual final state of the card:
+- **Push**: use the enriched description (existing content + appended sections).
+- **Regenerate (before pushing)**: use the regenerated content once the user eventually chooses Push or Skip.
+- **Skip**: keep the original description unchanged.
+
+**Error handling:** If `update_card_details` fails on the "Push" branch, log a warning and continue — enrichment is non-critical. Do **not** re-show the AskUserQuestion gate on transport failure.
 
 ### Step 5: Derive branch name
 
