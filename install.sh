@@ -31,9 +31,11 @@ cp "$SCRIPT_DIR/skills/git-done/SKILL.md" "$CLAUDE_DIR/skills/git-done/SKILL.md"
 cp "$SCRIPT_DIR/skills/qa-report/SKILL.md" "$CLAUDE_DIR/skills/qa-report/SKILL.md"
 cp "$SCRIPT_DIR/skills/log-time/SKILL.md" "$CLAUDE_DIR/skills/log-time/SKILL.md"
 
-# Copy launcher script
+# Copy launcher scripts
 cp "$SCRIPT_DIR/scripts/trello-mcp.sh" "$CLAUDE_DIR/scripts/trello-mcp.sh"
 chmod +x "$CLAUDE_DIR/scripts/trello-mcp.sh"
+cp "$SCRIPT_DIR/scripts/trello-attach.sh" "$CLAUDE_DIR/scripts/trello-attach.sh"
+chmod +x "$CLAUDE_DIR/scripts/trello-attach.sh"
 
 echo "trello-next installed successfully."
 echo ""
@@ -44,6 +46,7 @@ echo "  ~/.claude/skills/git-done/SKILL.md"
 echo "  ~/.claude/skills/qa-report/SKILL.md"
 echo "  ~/.claude/skills/log-time/SKILL.md"
 echo "  ~/.claude/scripts/trello-mcp.sh"
+echo "  ~/.claude/scripts/trello-attach.sh"
 echo ""
 echo "Per-project setup:"
 echo "  1. Add Trello credentials to your project's .env or _ss_environment.php:"

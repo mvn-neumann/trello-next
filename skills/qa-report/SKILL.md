@@ -247,11 +247,28 @@ If `.claude/trello-active-card.json` exists and the Trello MCP is available, ask
 **Question:** "Attach screenshots to the Trello card?"
 
 **Options:**
-- **"Yes, attach all screenshots"** — upload each screenshot file to the Trello card:
-  ```
-  attach_image_to_card  cardId: <cardId>  imagePath: .reports/screenshots/<branch-name>-<n>-<slug>.png  name: "QA: <check description>"
-  ```
+- **"Yes, attach all screenshots"** — upload each screenshot file to the Trello card.
+
+  **Choose the right method based on whether the dev URL is publicly reachable:**
+
+  - **Public URL** (staging server, live site): use the MCP tool:
+    ```
+    attach_image_to_card  cardId: <cardId>  imagePath: .reports/screenshots/<branch-name>-<n>-<slug>.png  name: "QA: <check description>"
+    ```
+
+  - **Local dev screenshot** (ddev, localhost — Trello's servers cannot reach these URLs):
+    use the curl script instead:
+    ```bash
+    bash .claude/scripts/trello-attach.sh <cardId> \
+      .reports/screenshots/<branch-name>-<n>-<slug>.png \
+      "QA: <check description>"
+    ```
+    The script resolves Trello credentials from env vars → `.env` → `_ss_environment.php`
+    and uploads the file directly via the Trello REST API. It prints the attachment ID on
+    success and exits 1 with an error message on failure.
+
   After all uploads: `Attached <n> screenshots to the Trello card.`
+
 - **"No"** — skip; the report file is the deliverable.
 
 If the state file does not exist, skip this step silently.
