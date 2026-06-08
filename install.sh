@@ -5,6 +5,8 @@
 #   ~/.claude/skills/trello-next/SKILL.md   (shared, all projects)
 #   ~/.claude/skills/git-new/SKILL.md       (shared, all projects)
 #   ~/.claude/skills/git-done/SKILL.md      (shared, all projects)
+#   ~/.claude/skills/spec/SKILL.md          (shared, all projects)
+#   ~/.claude/skills/tdd/SKILL.md           (shared, all projects)
 #   ~/.claude/scripts/trello-mcp.sh         (shared MCP launcher)
 #
 # Per-project setup (manual):
@@ -22,6 +24,8 @@ mkdir -p "$CLAUDE_DIR/skills/git-new"
 mkdir -p "$CLAUDE_DIR/skills/git-done"
 mkdir -p "$CLAUDE_DIR/skills/qa-report"
 mkdir -p "$CLAUDE_DIR/skills/log-time"
+mkdir -p "$CLAUDE_DIR/skills/spec"
+mkdir -p "$CLAUDE_DIR/skills/tdd"
 mkdir -p "$CLAUDE_DIR/scripts"
 
 # Copy skill files
@@ -30,6 +34,8 @@ cp "$SCRIPT_DIR/skills/git-new/SKILL.md" "$CLAUDE_DIR/skills/git-new/SKILL.md"
 cp "$SCRIPT_DIR/skills/git-done/SKILL.md" "$CLAUDE_DIR/skills/git-done/SKILL.md"
 cp "$SCRIPT_DIR/skills/qa-report/SKILL.md" "$CLAUDE_DIR/skills/qa-report/SKILL.md"
 cp "$SCRIPT_DIR/skills/log-time/SKILL.md" "$CLAUDE_DIR/skills/log-time/SKILL.md"
+cp "$SCRIPT_DIR/skills/spec/SKILL.md" "$CLAUDE_DIR/skills/spec/SKILL.md"
+cp "$SCRIPT_DIR/skills/tdd/SKILL.md" "$CLAUDE_DIR/skills/tdd/SKILL.md"
 
 # Copy launcher scripts
 cp "$SCRIPT_DIR/scripts/trello-mcp.sh" "$CLAUDE_DIR/scripts/trello-mcp.sh"
@@ -45,6 +51,8 @@ echo "  ~/.claude/skills/git-new/SKILL.md"
 echo "  ~/.claude/skills/git-done/SKILL.md"
 echo "  ~/.claude/skills/qa-report/SKILL.md"
 echo "  ~/.claude/skills/log-time/SKILL.md"
+echo "  ~/.claude/skills/spec/SKILL.md"
+echo "  ~/.claude/skills/tdd/SKILL.md"
 echo "  ~/.claude/scripts/trello-mcp.sh"
 echo "  ~/.claude/scripts/trello-attach.sh"
 echo ""

@@ -18,12 +18,14 @@ This skill fetches the oldest card from the Trello "To-Do" list, reads all its d
 There are two paths through this skill depending on whether a plan file already exists for the selected card:
 
 - **New card** — Steps 1 → 2 → 3 → 4 → 4c → 5 → 6 → 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11 → user chooses:
-  - **"Start implementing"** → create branch, implement plan, then run `/qa-report`
-  - **"Discuss the plan"** → wait for user input
+  - **"Start implementing"** → run `/spec` (write Given/When/Then scenarios), then `/git-new` to create the branch, then `/tdd` (write tests first, implement, run suite green), then `/qa-report` for visual scenarios
+  - **"Discuss the plan"** → run `/spec` and `/git-new` (branch + spec ready), then wait for user input; after implementation `/tdd` and `/qa-report` apply in the same order
   - **"Just the plan"** → stop here
 - **Resuming card with existing plan** — Steps 1 → 2 → 3 → 4 → 5 → 6 (check plan) → user chooses:
   - **"Continue"** → skip to Step 10 → 11
   - **"Re-plan"** → continue with Steps 7 (enter plan mode) → 8 → 9 (exit plan mode, persist) → 10 → 11
+
+**Optional SDD/TDD chain:** `/spec` → `/git-new` → `/tdd` → `/qa-report` → `/git-done`. `/spec` writes `.specs/<branch>.md` with classified Given/When/Then scenarios; `/tdd` authors tests from that spec before implementing. This chain slots in after Step 11 and is the default for "Start implementing". Skip `/spec` and `/tdd` entirely on cards where the user prefers direct implementation.
 
 Steps 7–9 run inside **plan mode** (`EnterPlanMode` / `ExitPlanMode`). Plan mode restricts all tools to read-only operations (except writing to the plan mode designated file), enabling safe, thorough codebase exploration before committing to an implementation plan.
 
@@ -524,8 +526,8 @@ Use `AskUserQuestion` to ask what the user wants to do next:
 **Question:** "What would you like to do?"
 
 **Options:**
-- **"Start implementing"** — Run `/git-new <branch-name-from-step-5>` to create the branch, then immediately begin implementing the plan. Once every step in the plan's checklist is complete (and any uncommitted work is committed), invoke `/qa-report` to verify the changes in a browser before the user runs `/git-done`. No further user input needed during implementation.
-- **"Discuss the plan"** — Run `/git-new <branch-name-from-step-5>` to create the branch (since a plan file was already written), then wait for the user's input to discuss, clarify, or adjust the plan. After implementation eventually starts and finishes, invoke `/qa-report` before the user runs `/git-done`.
+- **"Start implementing"** — Invoke `/spec` to write formal Given/When/Then scenarios (classified as logic/interactive/visual), then run `/git-new <branch-name-from-step-5>` to create the branch, then invoke `/tdd` to write tests first from the spec and implement the plan (running the test suite green at the end). Once complete, invoke `/qa-report` to verify visual scenarios in a browser before the user runs `/git-done`. No further user input needed during implementation.
+- **"Discuss the plan"** — Invoke `/spec` and then run `/git-new <branch-name-from-step-5>` to create the branch (branch + spec are ready), then wait for the user's input to discuss, clarify, or adjust the plan. After implementation eventually starts, `/tdd` and `/qa-report` apply in the same order before the user runs `/git-done`.
 - **"Just the plan"** — The user only wanted the analysis and plan. End the skill here — do not create a branch or start implementing.
 - **"Skip this card"** — The user wants to reject this card and pick a different one:
   1. Move the card back to its original list if it was moved in Step 10a.

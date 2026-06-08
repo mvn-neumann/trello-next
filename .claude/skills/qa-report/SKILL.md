@@ -242,16 +242,23 @@ If any items **failed**, describe them clearly so the developer can act immediat
 
 ### Step 6: Offer to attach screenshots to Trello
 
-If `.claude/trello-active-card.json` exists and the Trello MCP is available, ask the user with `AskUserQuestion`:
+If `.claude/trello-active-card.json` exists and Trello API credentials are resolvable, ask the user with `AskUserQuestion`:
 
 **Question:** "Attach screenshots to the Trello card?"
 
 **Options:**
-- **"Yes, attach all screenshots"** — upload each screenshot file to the Trello card:
+- **"Yes, attach all screenshots"** — upload each screenshot file to the Trello card via the Trello REST API with `curl` (do **not** use the MCP `attach_image_to_card` tool — it routes the image through the model context as base64 and fails on real screenshots):
+
+  **Credentials:** resolve `TRELLO_API_KEY` and `TRELLO_TOKEN` the same way `trello-next` Step 4b does — use the env vars if set, otherwise source the project-root `.env` (`set -a; . .env; set +a`), falling back to `.claude/scripts/trello-mcp.sh` / `_ss_environment.php` in the same order the MCP launch script uses. The `cardId` comes from `.claude/trello-active-card.json`.
+
+  Upload each screenshot (run in parallel — multiple `Bash` calls in one message):
+  ```bash
+  curl -sf -X POST \
+    "https://api.trello.com/1/cards/<cardId>/attachments?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" \
+    -F "file=@.reports/screenshots/<branch-name>-<n>-<slug>.png" \
+    -F "name=QA: <check description>"
   ```
-  attach_image_to_card  cardId: <cardId>  imagePath: .reports/screenshots/<branch-name>-<n>-<slug>.png  name: "QA: <check description>"
-  ```
-  After all uploads: `Attached <n> screenshots to the Trello card.`
+  Query-param auth works for this write endpoint (same as the card-reposition curl in `trello-next`). The `-f` flag makes curl return non-zero on HTTP errors so failures are detectable. After all uploads: `Attached <n> screenshots to the Trello card.`
 - **"No"** — skip; the report file is the deliverable.
 
 If the state file does not exist, skip this step silently.
@@ -276,4 +283,4 @@ If the state file does not exist, skip this step silently.
 | Browser MCP unavailable | Fall back to manual screenshot workflow (Step 4 Option C) |
 | Screenshot save fails | Note it in the report as "screenshot unavailable" and continue |
 | No changes on branch | Warn user; still offer to verify any URL manually |
-| Trello `attach_image_to_card` fails | Warn but don't abort — report file is still complete |
+| Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |

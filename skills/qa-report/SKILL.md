@@ -242,7 +242,7 @@ If any items **failed**, describe them clearly so the developer can act immediat
 
 ### Step 6: Offer to attach screenshots to Trello
 
-If `.claude/trello-active-card.json` exists and the Trello MCP is available, ask the user with `AskUserQuestion`:
+If `.claude/trello-active-card.json` exists and Trello API credentials are resolvable, ask the user with `AskUserQuestion`:
 
 **Question:** "Attach screenshots to the Trello card?"
 
@@ -293,4 +293,4 @@ If the state file does not exist, skip this step silently.
 | Browser MCP unavailable | Fall back to manual screenshot workflow (Step 4 Option C) |
 | Screenshot save fails | Note it in the report as "screenshot unavailable" and continue |
 | No changes on branch | Warn user; still offer to verify any URL manually |
-| Trello `attach_image_to_card` fails | Warn but don't abort — report file is still complete |
+| Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |

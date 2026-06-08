@@ -8,3 +8,4 @@ Thumbs.db
 .env.local
 _ss_environment.php
 .reports/
+.claude/git-config.json
