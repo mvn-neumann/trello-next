@@ -24,10 +24,11 @@ This skill automates the final step of the git workflow: merging your completed 
 2. **Commits Pending Changes**: Stages and commits any modified or untracked files
 3. **Switches to Default Branch**: Checks out the default branch
 4. **Pulls Latest**: Pulls any remote changes to the default branch
-5. **Merges Branch**: Fast-forward merges the feature branch into the default branch
-6. **Pushes**: Pushes the default branch to origin
-7. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
-8. **Reports Result**: Shows what was merged, pushed, and Trello status
+5. **Confirms with User**: Shows commits and asks for explicit merge confirmation before proceeding
+6. **Merges Branch**: Fast-forward merges the feature branch into the default branch
+7. **Pushes**: Pushes the default branch to origin
+8. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
+9. **Reports Result**: Shows what was merged, pushed, and Trello status
 
 ### Workflow Steps
 
@@ -92,7 +93,25 @@ git checkout <defaultBranch>
 git pull
 ```
 
-#### Step 5: Merge the Feature Branch
+#### Step 5: Confirm merge with user
+
+Before merging, show the user a summary and ask for confirmation using `AskUserQuestion`:
+
+```
+git log <defaultBranch>..{branch-name} --oneline
+```
+
+Present the commits to the user and ask:
+
+> Merge `{branch-name}` into `<defaultBranch>` and push?
+
+Options:
+- **"Yes, merge and push"** — proceed to merge and push
+- **"No, cancel"** — stop here, leave the user on `<defaultBranch>` (already checked out), do not merge
+
+If the user cancels, report: `Cancelled. Branch {branch-name} was not merged.` and stop.
+
+#### Step 6: Merge the Feature Branch
 
 ```bash
 git merge {branch-name}
@@ -100,13 +119,13 @@ git merge {branch-name}
 
 This should be a fast-forward merge. If it's not (i.e. there are conflicts), stop and report the conflict to the user — do not attempt to resolve it automatically.
 
-#### Step 6: Push to Origin
+#### Step 7: Push to Origin
 
 ```bash
 git push
 ```
 
-#### Step 7: Advance Trello Card
+#### Step 8: Advance Trello Card
 
 Check if `.claude/trello-active-card.json` exists. If it does:
 
@@ -137,7 +156,7 @@ If the file does not exist, or the Trello MCP is not available, skip this step s
 
 If the card is already on the last list (no next list), delete the state file and plan file, and note it in the report.
 
-#### Step 8: Report Success
+#### Step 9: Report Success
 
 Tell the user:
 - Which branch was merged (`{branch-name}` → `<defaultBranch>`)
