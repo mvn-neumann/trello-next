@@ -112,6 +112,12 @@ await client.send('Page.startScreencast', {
   everyNthFrame: 1
 });
 
+// Let the browser settle so any pre-click paint events flush
+await new Promise(r => setTimeout(r, 300));
+
+// Snap frame count before click — files written before this index are discarded
+const clickFrame = frameIndex;
+
 // Trigger the action
 const el = document.querySelector('<ACTION_SELECTOR>');
 if (el) el.click();
@@ -130,7 +136,21 @@ if (PLAYBACK_RATE < 1) {
 // Brief pause to ensure the last frame event fires
 await new Promise(r => setTimeout(r, 200));
 
-return { frames: frameIndex, outDir };
+// Delete pre-click frames from disk
+for (let i = 0; i < clickFrame; i++) {
+  const p = path.join(outDir, `frame_${String(i).padStart(4, '0')}.jpg`);
+  fs.rmSync(p, { force: true });
+}
+// Rename remaining frames to start at 0000
+let newIdx = 0;
+for (let i = clickFrame; i < frameIndex; i++) {
+  const src = path.join(outDir, `frame_${String(i).padStart(4, '0')}.jpg`);
+  const dst = path.join(outDir, `frame_${String(newIdx).padStart(4, '0')}.jpg`);
+  fs.renameSync(src, dst);
+  newIdx++;
+}
+
+return { frames: newIdx, outDir };
 ```
 
 **Notes:**
@@ -171,6 +191,13 @@ client.on('Page.screencastFrame', async ({ data, sessionId }) => {
 });
 
 await client.send('Page.startScreencast', { format: 'jpeg', quality: 85, maxWidth: 1280, maxHeight: 900, everyNthFrame: 1 });
+
+// Let the browser settle so any pre-click paint events flush
+await page.waitForTimeout(300);
+
+// Snap frame count before click — discard static pre-click frames
+const clickFrame = frames.length;
+
 await page.click('<ACTION_SELECTOR>');
 await page.waitForTimeout(<DURATION_MS>);
 await client.send('Page.stopScreencast');
@@ -178,7 +205,7 @@ if (PLAYBACK_RATE < 1) {
   await client.send('Animation.setPlaybackRate', { playbackRate: 1 });
 }
 await page.waitForTimeout(200);
-return frames;
+return frames.slice(clickFrame);
 ```
 
 Then decode each frame to a file:
