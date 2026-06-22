@@ -46,8 +46,9 @@ If the user's invocation message did not specify all of the following, ask with 
 - **Action** — what to click or trigger (CSS selector or human description, e.g. `a[data-page-id="6"]`).
 - **Duration** — how long to record after the action in milliseconds (default: 1500 ms).
 - **Output filename** — short slug for the GIF (default: derived from branch name + `-screencast`).
+- **slowAnimation** (optional) — playback rate for CSS animations/transitions as a decimal between 0 and 1. `0.2` = 20% speed (5× slower), `0.1` = 10× slower. Omit or set to `1` for normal speed. Parsed from args like `slow=0.2` or `slowAnimation=0.2` or simply `slow` (defaults to `0.2`). **When set, increase `Duration` proportionally** — e.g. if the animation normally finishes in 300 ms and you set `slow=0.2`, set duration to at least 1500 ms.
 
-The user may provide these via the invocation args string (e.g. `/qa-screencast https://doitss4.ddev.site/ click=a[data-page-id="6"] 1500ms`). Parse what is available; ask only for what is missing.
+The user may provide these via the invocation args string (e.g. `/qa-screencast https://doitss4.ddev.site/ click=a[data-page-id="6"] 1500ms slow=0.2`). Parse what is available; ask only for what is missing.
 
 ### Step 3: Prepare the output directory
 
@@ -75,7 +76,7 @@ mcp__playwright__browser_evaluate  function: () => {
 
 Use `mcp__playwright__browser_run_code_unsafe` to run the following TypeScript code. This opens a CDP session, starts the screencast, triggers the action, waits, stops the screencast, and saves frames to disk.
 
-**Exact code to execute (fill in `ACTION_SELECTOR` and `DURATION_MS` from Step 2):**
+**Exact code to execute (fill in `ACTION_SELECTOR`, `DURATION_MS`, and `PLAYBACK_RATE` from Step 2):**
 
 ```typescript
 // CDP screencast — captures every browser paint as a JPEG frame
@@ -87,6 +88,13 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const client = await page.context().newCDPSession(page);
 let frameIndex = 0;
+
+// Slow down CSS animations/transitions if requested
+const PLAYBACK_RATE = <PLAYBACK_RATE>; // 1 = normal; 0.2 = 5× slower; 0.1 = 10× slower
+if (PLAYBACK_RATE < 1) {
+  await client.send('Animation.enable');
+  await client.send('Animation.setPlaybackRate', { playbackRate: PLAYBACK_RATE });
+}
 
 client.on('Page.screencastFrame', async ({ data, sessionId }) => {
   const framePath = path.join(outDir, `frame_${String(frameIndex).padStart(4, '0')}.jpg`);
@@ -109,10 +117,15 @@ const el = document.querySelector('<ACTION_SELECTOR>');
 if (el) el.click();
 else throw new Error('Element not found: <ACTION_SELECTOR>');
 
-// Wait for animation to complete
+// Wait for animation to complete (increase this proportionally when slowAnimation is set)
 await new Promise(r => setTimeout(r, <DURATION_MS>));
 
 await client.send('Page.stopScreencast');
+
+// Restore normal animation speed
+if (PLAYBACK_RATE < 1) {
+  await client.send('Animation.setPlaybackRate', { playbackRate: 1 });
+}
 
 // Brief pause to ensure the last frame event fires
 await new Promise(r => setTimeout(r, 200));
@@ -123,6 +136,7 @@ return { frames: frameIndex, outDir };
 **Notes:**
 - Replace `<ACTION_SELECTOR>` with the actual CSS selector (e.g. `a[data-page-id="6"]`).
 - Replace `<DURATION_MS>` with the duration integer (e.g. `1500`).
+- Replace `<PLAYBACK_RATE>` with `1` when `slowAnimation` is not set, or the user-specified rate (e.g. `0.2`) when it is.
 - The code calls `document.querySelector` — this is available because `browser_run_code_unsafe` runs in the Node.js Playwright context, where `page.evaluate` is not needed for direct DOM access via `el.click()`. If the selector triggers a Bootstrap event that expects a real click, use `await page.click('<ACTION_SELECTOR>')` instead of `el.click()`.
 - If `require('fs')` throws (sandboxed environment), fall back to returning `{ frames: frameIndex, data: [] }` and use the manual decode path in Step 5b.
 
@@ -145,6 +159,12 @@ If the tool throws on `require('fs')`, re-run with this alternative that returns
 const client = await page.context().newCDPSession(page);
 const frames = [];
 
+const PLAYBACK_RATE = <PLAYBACK_RATE>; // 1 = normal; 0.2 = 5× slower
+if (PLAYBACK_RATE < 1) {
+  await client.send('Animation.enable');
+  await client.send('Animation.setPlaybackRate', { playbackRate: PLAYBACK_RATE });
+}
+
 client.on('Page.screencastFrame', async ({ data, sessionId }) => {
   frames.push(data);
   await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
@@ -152,9 +172,12 @@ client.on('Page.screencastFrame', async ({ data, sessionId }) => {
 
 await client.send('Page.startScreencast', { format: 'jpeg', quality: 85, maxWidth: 1280, maxHeight: 900, everyNthFrame: 1 });
 await page.click('<ACTION_SELECTOR>');
-await new Promise(r => setTimeout(r, <DURATION_MS>));
+await page.waitForTimeout(<DURATION_MS>);
 await client.send('Page.stopScreencast');
-await new Promise(r => setTimeout(r, 200));
+if (PLAYBACK_RATE < 1) {
+  await client.send('Animation.setPlaybackRate', { playbackRate: 1 });
+}
+await page.waitForTimeout(200);
 return frames;
 ```
 
@@ -239,6 +262,7 @@ bash .claude/scripts/trello-attach.sh <cardId> \
 | Action selector not found | Report clearly; ask user to verify the selector in DevTools |
 | GIF file size > 10 MB | Re-run ffmpeg with `scale=480:-1` or `-framerate 10` to reduce size |
 | Dev server unreachable | Prompt user to run `ddev start` |
+| `Animation.setPlaybackRate` throws | CDP Animation domain not supported in this browser — omit the slow-animation block and re-run without `slowAnimation` |
 
 ## Output
 
