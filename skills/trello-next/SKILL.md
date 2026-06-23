@@ -33,7 +33,7 @@ Steps 7–9 run inside **plan mode** (`EnterPlanMode` / `ExitPlanMode`). Plan mo
 
 ### Step 1: Fetch board data, identify user, and resolve default branch (parallel)
 
-Make these four calls **in parallel** (they have no dependencies on each other):
+Make these five calls **in parallel** (they have no dependencies on each other):
 
 1. **Get all lists:**
    ```
@@ -56,9 +56,17 @@ Make these four calls **in parallel** (they have no dependencies on each other):
    ```
    If the file exists and contains a `defaultBranch` value, save it for later use in Step 11. If the file does not exist, the default branch will be resolved in Step 10c.
 
+5. **Read project-local list mapping (if any):**
+   ```bash
+   cat .claude/trello-lists.json 2>/dev/null
+   ```
+   If present, this file maps Trello list names to the three workflow roles for boards whose lists don't match the default aliases. See the precedence rule below.
+
 **Process the results:**
 
 Save **all** lists with their `id`, `name`, and `pos` (position on the board), sorted by `pos` ascending. This ordered list is needed later to determine the "next" list for a card.
+
+**Project-local mapping (highest precedence).** If `.claude/trello-lists.json` was found (call 5), then for each of `todoList` / `inProgress` / `review` present in it, resolve that role by matching its value against each list's `name` (case-insensitive, exact match); if no name matches, try matching against the list `id`. A configured role overrides BOTH the built-in name aliases and the position fallback below. A role set to `null` (e.g. `"review": null`) means "no list for this role". Roles **absent** from the file fall back to the alias + position logic below.
 
 Find these lists by name (case-insensitive) and save their `id`s:
 - **To-Do list** — matches any of: "To Do", "To-Do", "Zu Erledigen", "Abzuarbeiten", "Offen"
@@ -67,7 +75,7 @@ Find these lists by name (case-insensitive) and save their `id`s:
 
 **Note:** The "Tasks" list is a separate backlog/inbox and is NOT managed by this workflow. Do not fetch cards from it.
 
-If no To-Do list is found, show the user ALL available list names and ask which one to use.
+If no To-Do list is resolved (neither via `.claude/trello-lists.json` nor the aliases above), show the user ALL available list names and ask which one to use.
 
 **Match the git user name** (case-insensitive) against each member's `fullName` and `username`. Try in order:
 1. **Exact match** — git name equals `fullName`
@@ -549,6 +557,7 @@ Use `AskUserQuestion` to ask what the user wants to do next:
 | Trello MCP not configured | Tell user to add `mcp-server-trello` to `.mcp.json` with their API key/token and board ID |
 | Trello MCP fails to start | See **Fixing a broken Trello MCP** below |
 | No matching list found | List ALL available list names and ask the user which one to use |
+| Board uses non-standard list names | Add `.claude/trello-lists.json` to the project mapping `todoList` / `inProgress` / `review` to the board's list names |
 | List is empty | Tell user the list is empty |
 | Card has no description | Proceed with title only; note the missing description in open questions |
 | MCP tool call fails | Show the error and suggest the user checks their Trello API credentials |
