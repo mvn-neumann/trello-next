@@ -133,6 +133,7 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 | `/git-new` | Before file changes | Creates a `fix-*` or `feature-*` branch from the main branch |
 | `/tdd` | After `/git-new` | Writes tests first from the spec, implements the plan, and runs the suite green |
 | `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages and generates a markdown QA report |
+| `/qa-screencast` | Optional — alongside or after `/qa-report` | Records an animated GIF of a browser interaction via CDP screencast → `.reports/screencasts/<slug>.gif` |
 | `/git-done` | When work is complete | Merges the branch, pushes, and moves the Trello card to the next list |
 | `/log-time` | Any time after starting a card | Analyzes git commits, estimates hours worked, and posts a `/spent` comment to the Trello card |
 
@@ -153,10 +154,13 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 │   │   └── SKILL.md              # Merge, push, and Trello card advancement
 │   ├── qa-report/
 │   │   └── SKILL.md              # Screenshot-based QA verification and report
+│   ├── qa-screencast/
+│   │   └── SKILL.md              # Animated GIF recorder via CDP screencast frames
 │   └── log-time/
 │       └── SKILL.md              # Git-based time estimation posted to Trello
 └── scripts/
-    └── trello-mcp.sh             # MCP launcher (reads creds from .env or _ss_environment.php)
+    ├── trello-mcp.sh             # MCP launcher (reads creds from .env or _ss_environment.php)
+    └── trello-attach.sh          # Uploads files as Trello card attachments
 ```
 
 ## Spec-driven + test-driven flow
@@ -169,6 +173,7 @@ The full SDD/TDD chain runs after `/trello-next` writes the plan and Acceptance 
 /git-new       ← creates fix-*/feature-* branch (tracked files require a branch)
 /tdd           ← writes tests first, implements plan, runs suite green
 /qa-report     ← screenshots visual scenarios (those without automated tests)
+/qa-screencast ← (optional) records animated GIF of interactions via CDP
 /git-done      ← merges branch, pushes, advances Trello card
 ```
 
