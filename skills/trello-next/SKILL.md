@@ -194,6 +194,20 @@ If a download fails (non-zero exit code), skip it silently and note the attachme
 rm -f /tmp/trello-<cardId>-*.{png,jpg,webp,gif,svg}
 ```
 
+**Uploading images back to a card (if ever needed):** Never pass image data as inline
+base64 to an MCP tool (e.g. `attach_image_data_to_card`) — larger payloads get silently
+truncated when the tool call is constructed, producing a corrupted attachment with no
+error. Always use the multipart curl upload already provided in this repo instead:
+
+```bash
+bash .claude/scripts/trello-attach.sh <cardId> <path/to/screenshot.png> "<attachment name>"
+```
+
+See `scripts/trello-attach.sh` for the underlying `curl -X POST .../attachments
+-F file=@...` implementation and credential resolution (same order as above: env vars
+→ `.env` → `_ss_environment.php`). This mirrors the pattern already used by the
+`qa-report` skill.
+
 ### Step 4c: Enrich card with Problem / Goal / Scope / Acceptance Criteria
 
 #### 4c.1 — Detect missing sections
