@@ -1,6 +1,7 @@
 ---
 name: trello-next
 description: Fetch the oldest card from the Trello "To-Do" list, analyze the issue, and produce an implementation plan. Use when the user says "next task", "what's next", "trello next", "/trello-next", or "get next issue".
+model: fable
 ---
 
 # Trello Next
@@ -362,7 +363,7 @@ Call `EnterPlanMode` (no parameters). This activates plan mode, which:
 
 **7a. Read all collected data** from Step 4 carefully.
 
-**7b. Explore the codebase** to validate assumptions and identify affected files. Use `Explore` agents (or Glob/Grep/Read directly) to investigate — in parallel where possible:
+**7b. Explore the codebase** to validate assumptions and identify affected files. **Delegate this to `Explore` agents and pass `model: "sonnet"` when spawning each one** (the Agent tool accepts a per-invocation model override that overrides the session model). Prefer Explore agents over inline Glob/Grep/Read so the token-heavy file reading runs on Sonnet, not the orchestrator model. Investigate — in parallel where possible:
 - Search for files, components, or functions mentioned in the card description/comments
 - Trace the code paths that will need to change
 - Check for related tests, styles, templates, or configuration
