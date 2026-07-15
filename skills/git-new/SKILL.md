@@ -1,6 +1,7 @@
 ---
 name: git-new
 description: Prepare git branch for file changes. Resolves default branch from .claude/git-config.json (auto-detects if missing). Use when the user wants to create, update, fix, add, or make something.
+model: haiku
 ---
 
 # Git New

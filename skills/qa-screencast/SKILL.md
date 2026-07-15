@@ -1,6 +1,7 @@
 ---
 name: qa-screencast
 description: Records an animated GIF of a browser interaction using CDP screencast frames. Use when the user says "screencast", "record", "animate", "gif", "capture animation", or "/qa-screencast".
+model: haiku
 ---
 
 # QA Screencast

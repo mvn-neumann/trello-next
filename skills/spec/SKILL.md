@@ -1,6 +1,7 @@
 ---
 name: spec
 description: Write a formal spec (.specs/<branch>.md) with Given/When/Then scenarios derived from the Trello card's Acceptance Criteria and plan. Each scenario is classified as logic (PHPUnit), interactive (Playwright), or visual (/qa-report only). Use when the user says "spec", "/spec", "write spec", "write scenarios", or "specify".
+model: sonnet
 ---
 
 # Spec

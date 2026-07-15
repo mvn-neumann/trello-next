@@ -1,6 +1,7 @@
 ---
 name: tdd
 description: Write tests first from the .specs/<branch>.md, implement the plan to make them pass, then hand off to /qa-report for visual scenarios. Use when the user says "tdd", "/tdd", "test first", "write failing tests", or "implement with tests".
+model: sonnet
 ---
 
 # TDD

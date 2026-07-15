@@ -1,6 +1,7 @@
 ---
 name: git-done
 description: Merge the current fix/feature branch into the default branch and push to origin. Resolves default branch from .claude/git-config.json (auto-detects if missing).
+model: haiku
 ---
 
 # Git Done
