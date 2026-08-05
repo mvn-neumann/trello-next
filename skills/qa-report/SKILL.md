@@ -11,7 +11,9 @@ This skill verifies implemented changes by:
 2. Navigating the dev site (and, when reachable, the live site for a before/after comparison)
 3. Closing overlays (debug bar, cookie consent, dialogs) before every screenshot
 4. Marking what changed with simple stroke-only annotations (rectangles, arrows, numbers)
-5. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
+5. For form targets: filling the form with marked test data, submitting it (on dev **and**
+   live), and verifying the result/confirmation page
+6. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
 
 ## Usage
 
@@ -130,6 +132,12 @@ For each target, record:
   element(s) that changed (CSS selector, a short number/letter label, a one-line note of what
   changed there), inferred from the diff/plan step. Leave empty if no single element can be
   pinned down (e.g. a page-wide layout shift) — the screenshot is still taken, just unmarked.
+- **form** — `true` when the target is a form or the change touches a form in any way
+  (form templates, form/controller classes, submission handlers, validation JS, upload
+  handling, confirmation emails/pages). A form target's **check** must cover the full
+  submission flow — "form submits successfully and shows the confirmation page" — never
+  just the form's appearance. A static screenshot of an empty form proves nothing; broken
+  submissions (e.g. a 500 on final submit) only surface when actually submitting.
 
 Show the list to the user before proceeding. If the list is empty, use `AskUserQuestion` to ask what to verify.
 
@@ -266,6 +274,42 @@ For each verification target (run in parallel across targets where the tool supp
    end), and number/letter labels. Do not draw filled shapes or semi-transparent overlays;
    they obscure the underlying UI the reviewer needs to see.
 
+#### Form targets: always test the submission
+
+For every target marked `form: true`, testing the actual submission is **mandatory** — on
+dev **and**, when `liveUrl` is set and reachable, on live. A test entry on a live system is
+acceptable and expected; the cost of one test entry is far lower than an undetected broken
+form. Never skip the submit because the environment is "production".
+
+Run this flow on each environment (dev first, then live):
+
+1. **Use clearly-marked test data** so entries are identifiable and removable: "TEST" or
+   "Testeintrag" in name fields, a test email address, "Testeintrag, bitte ignorieren" in
+   free-text/message fields, and valid dummy values for everything else the form requires
+   (phone, date, selects, checkboxes). If the project has a dedicated form-fill skill or
+   documented test data (check the project's `CLAUDE.md` and skills list), prefer that.
+2. Fill all required fields with `mcp__playwright__browser_fill_form` (or `browser_type` /
+   `browser_select_option` / `browser_file_upload` for uploads). For upload fields, use a
+   small real file of an accepted type.
+3. Screenshot the filled form: `.reports/screenshots/<branch-name>-<n>-<slug>-filled.png`
+   (append `-live` before `.png` for the live run).
+4. Submit the form (click the actual submit button, don't bypass via JS), then wait for the
+   navigation/response to settle (`browser_wait_for`).
+5. Screenshot the result: `.reports/screenshots/<branch-name>-<n>-<slug>-result.png`
+   (again `-result-live.png` on live).
+6. Judge the result:
+   - Confirmation/success page or success message shown → **Pass**
+   - Unexpected validation errors, a 500/error page, or a blank page → **Fail**; capture
+     `mcp__playwright__browser_console_messages` and check
+     `mcp__playwright__browser_network_requests` for the failing request, and quote the
+     error in the report
+7. **Multi-step forms:** repeat fill → screenshot → next for every step until the final
+   confirmation; number the intermediate shots (`-filled-step2.png`, …).
+
+If only a non-interactive fallback is available (Puppeteer fallback without evaluate,
+manual screenshots), the submission cannot be tested — mark the form target ⚠️ **Needs
+review** and state explicitly that the submission flow was not exercised.
+
 #### Option B: Puppeteer MCP
 
 For each verification target, same three-shot pattern as Option A:
@@ -346,6 +390,19 @@ _Live site not available — dev-only capture._
 1. Hero heading now centred on mobile
 2. New "Book now" button added below the fold
 <omit this list if the target had no annotations>
+
+<additionally, for form targets only:>
+
+**Filled form (dev):**
+![<check description> — filled](./screenshots/<branch-name>-<n>-<slug>-filled.png)
+
+**Result after submit (dev):**
+![<check description> — result](./screenshots/<branch-name>-<n>-<slug>-result.png)
+
+<and the same -filled-live / -result-live pair when the live submission was run.
+The **Result** line above must state explicitly whether the submission succeeded on each
+environment, e.g. "✅ Pass — submitted on dev and live, confirmation page shown on both.">
+
 
 ---
 
@@ -428,6 +485,8 @@ If the state file does not exist, skip this step silently.
 | `.reports/screenshots/<branch-name>-<n>-<slug>-dev.png` | Clean dev-site screenshot, overlays closed |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-live.png` | Clean live-site screenshot, overlays closed (only when `liveUrl` is set and reachable for this target) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png` | Dev-site screenshot with stroke-only change markers (rectangles/lines/arrows/numbers) |
+| `.reports/screenshots/<branch-name>-<n>-<slug>-filled.png` | Form target only: form filled with marked test data, before submit (`-filled-live.png` for the live run) |
+| `.reports/screenshots/<branch-name>-<n>-<slug>-result.png` | Form target only: page shown after submitting — confirmation or error (`-result-live.png` for the live run) |
 
 ---
 
