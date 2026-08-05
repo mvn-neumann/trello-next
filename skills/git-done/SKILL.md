@@ -25,11 +25,10 @@ This skill automates the final step of the git workflow: merging your completed 
 2. **Commits Pending Changes**: Stages and commits any modified or untracked files
 3. **Switches to Default Branch**: Checks out the default branch
 4. **Pulls Latest**: Pulls any remote changes to the default branch
-5. **Confirms with User**: Shows commits and asks for explicit merge confirmation before proceeding
-6. **Merges Branch**: Fast-forward merges the feature branch into the default branch
-7. **Pushes**: Pushes the default branch to origin
-8. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
-9. **Reports Result**: Shows what was merged, pushed, and Trello status
+5. **Merges Branch**: Fast-forward merges the feature branch into the default branch, automatically
+6. **Pushes**: Pushes the default branch to origin
+7. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
+8. **Reports Result**: Shows what was merged, pushed, and Trello status
 
 ### Workflow Steps
 
@@ -94,39 +93,26 @@ git checkout <defaultBranch>
 git pull
 ```
 
-#### Step 5: Confirm merge with user
+#### Step 5: Merge the Feature Branch
 
-Before merging, show the user a summary and ask for confirmation using `AskUserQuestion`:
-
-```
-git log <defaultBranch>..{branch-name} --oneline
-```
-
-Present the commits to the user and ask:
-
-> Merge `{branch-name}` into `<defaultBranch>` and push?
-
-Options:
-- **"Yes, merge and push"** — proceed to merge and push
-- **"No, cancel"** — stop here, leave the user on `<defaultBranch>` (already checked out), do not merge
-
-If the user cancels, report: `Cancelled. Branch {branch-name} was not merged.` and stop.
-
-#### Step 6: Merge the Feature Branch
+Show the commits being merged, then merge automatically — no confirmation needed:
 
 ```bash
+git log <defaultBranch>..{branch-name} --oneline
 git merge {branch-name}
 ```
 
-This should be a fast-forward merge. If it's not (i.e. there are conflicts), stop and report the conflict to the user — do not attempt to resolve it automatically.
+This should be a fast-forward merge and proceeds without asking the user. If it's not a
+fast-forward, or conflicts arise, **stop** and report to the user — do not attempt to resolve it
+automatically, and do not push.
 
-#### Step 7: Push to Origin
+#### Step 6: Push to Origin
 
 ```bash
 git push
 ```
 
-#### Step 8: Advance Trello Card
+#### Step 7: Advance Trello Card
 
 Check if `.claude/trello-active-card.json` exists. If it does:
 
@@ -157,7 +143,7 @@ If the file does not exist, or the Trello MCP is not available, skip this step s
 
 If the card is already on the last list (no next list), delete the state file and plan file, and note it in the report.
 
-#### Step 9: Report Success
+#### Step 8: Report Success
 
 Tell the user:
 - Which branch was merged (`{branch-name}` → `<defaultBranch>`)
@@ -179,9 +165,10 @@ Trello: moved "Newsletter Popup: Spelling Error" → "Review"
 |-----------|--------|
 | Already on default branch | Ask user which branch to merge |
 | Uncommitted changes | Stage and commit them before merging |
-| Merge conflict | Stop, report conflict, do not auto-resolve |
+| Clean fast-forward | Merge and push automatically, no confirmation |
+| Merge conflict | Stop, report conflict, do not auto-resolve, do not push |
 | Push rejected | Stop, report rejection (e.g. non-fast-forward) |
-| Not a fast-forward | Warn user and ask for confirmation before proceeding |
+| Not a fast-forward | Stop, report to user, do not merge automatically |
 
 ### Changing the Default Branch
 
@@ -189,6 +176,8 @@ Say "change default branch" at any time. The skill will update `.claude/git-conf
 
 ### Notes
 
+- Merging into the default branch is intentionally **automatic** — no confirmation prompt. Only a
+  merge conflict or non-fast-forward situation stops the flow for manual input.
 - This skill is the counterpart to `/git-new` — use that to start a branch, and this to finish it.
 - After a successful merge, the feature branch is **not** deleted automatically. Ask the user if they want to clean it up:
   ```bash
