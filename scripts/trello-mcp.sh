@@ -32,4 +32,10 @@ if [ -z "$TRELLO_API_KEY" ] || [ -z "$TRELLO_TOKEN" ]; then
   exit 1
 fi
 
-exec npx -y @delorenj/mcp-server-trello
+# HINWEIS: @delorenj/mcp-server-trello@1.8.0 deklariert im package.json ein "bin", das
+# auf die rohe TypeScript-Datei src/index.ts zeigt statt auf das kompilierte build/index.js.
+# Node 24 verweigert das Type-Stripping fuer .ts-Dateien unter node_modules
+# (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), wodurch der MCP-Server sofort abstuerzt
+# und der Client nur den generischen Fehler -32000 sieht. Workaround: das kompilierte
+# build/index.js direkt starten, statt das kaputte bin-Skript zu nutzen.
+exec npx -y -p @delorenj/mcp-server-trello sh -c 'NM="$(dirname "$(dirname "$(command -v mcp-server-trello)")")"; exec node "$NM/@delorenj/mcp-server-trello/build/index.js"'
