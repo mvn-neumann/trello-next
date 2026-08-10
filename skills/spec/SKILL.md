@@ -107,31 +107,26 @@ Also add a **Test target** line for testable scenarios:
 - `interactive` → proposed Playwright file: `tests/playwright/tests/<slug>.spec.ts`
 - `visual` → `(verified by /qa-report screenshot)`
 
-### Step 4: Preview and approve
+### Step 4: Preview and save
 
-Print the **full proposed spec** in a fenced code block so the user can review all scenarios and their types before anything is written.
+Print the **full proposed spec** in a fenced code block so the user can review all scenarios and their types.
 
-Then use `AskUserQuestion` to ask what to do:
+Then write it straight to `.specs/<branch-name>.md` (create the directory if needed: `mkdir -p .specs`) — no destination prompt. Confirm: `Spec saved to .specs/<branch-name>.md`.
 
-- **"Push to Trello + save spec"** — write `.specs/<branch-name>.md` (create the directory if needed: `mkdir -p .specs`), then append a short **Spec** summary block to the Trello card description via `update_card_details`:
+If the user asks for changes after seeing the preview, incorporate the feedback and rewrite the file — it's already saved, so nothing is lost by iterating.
 
-  Append text (after the existing description, separated by `\n\n---\n\n`):
-  ```markdown
-  ## Spec scenarios
+Only push the spec to the Trello card if the user explicitly asks for that. In that case, append a short **Spec** summary block to the card description via `update_card_details`:
 
-  | # | Scenario | Type |
-  |---|----------|------|
-  | 1 | <title> | logic |
-  | 2 | <title> | visual |
-  ```
+```markdown
+## Spec scenarios
 
-  Confirm: `Spec saved to .specs/<branch-name>.md and appended to Trello card.`
+| # | Scenario | Type |
+|---|----------|------|
+| 1 | <title> | logic |
+| 2 | <title> | visual |
+```
 
-- **"Regenerate"** — prompt the user for guidance via the auto-provided "Other" free-text input. Re-synthesize scenarios incorporating that feedback, then loop back to the preview. Cap at 3 regeneration cycles; on the fourth, fall through to "Save spec only" automatically.
-
-- **"Save spec only (skip Trello)"** — write `.specs/<branch-name>.md` but do not update the Trello card.
-
-**If `update_card_details` fails:** log a warning and continue — the spec file is the authoritative artifact.
+Append it after the existing description, separated by `\n\n---\n\n`. **If `update_card_details` fails:** log a warning and continue — the spec file is the authoritative artifact.
 
 ### Step 5: Output summary and next step
 
