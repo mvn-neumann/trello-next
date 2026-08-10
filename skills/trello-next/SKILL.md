@@ -550,13 +550,18 @@ next candidate instead.
 **If the card came from the To-Do list (Step 3):** Move it to the in-progress list identified in Step 1:
 
 ```
-move_card  cardId: <card id>  listId: <in-progress list id>  boardId: <projectBoardId>
+move_card  cardId: <card id>  listId: <in-progress list id>  boardId: <projectBoardIdLong>
 ```
 
 **Important:** `boardId` must be passed explicitly — `move_card` falls back to the server's
 `TRELLO_BOARD_ID` env value, **not** the saved active-board file, so it can silently disagree
-with the board that `get_lists`/`get_board_members` just read from. Passing `projectBoardId`
-here removes that gap entirely.
+with the board that `get_lists`/`get_board_members` just read from.
+
+**Must be the 24-char long `id`, not the shortLink.** `get_lists`/`get_board_members` hit
+`GET /boards/{boardId}/...` where `{boardId}` is a URL path segment — Trello resolves a shortLink
+there just fine. `move_card` instead sends `idBoard` as a **body field** on `PUT /cards/{cardId}`,
+and Trello's API only accepts the long `id` in that position — passing the shortLink there fails
+with a `400`. Use `projectBoardIdLong` here, not `projectBoardId`.
 
 Tell the user: `Moved card to "<list name>".`
 
@@ -570,7 +575,7 @@ If the To-Do list is the last list on the board (no list after it), warn the use
 
 ```json
 {
-  "boardId": "<projectBoardId>",
+  "boardId": "<projectBoardIdLong>",
   "cardId": "<card id>",
   "cardName": "<card title>",
   "cardUrl": "<card URL>",
