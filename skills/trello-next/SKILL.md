@@ -32,13 +32,65 @@ Steps 7–9 run inside **plan mode** (`EnterPlanMode` / `ExitPlanMode`). Plan mo
 
 ## Instructions
 
-### Step 1: Fetch board data, identify user, and resolve default branch (parallel)
+### Step 1: Resolve the project's board, fetch board data, identify user, and resolve default branch
 
-Make these five calls **in parallel** (they have no dependencies on each other):
+**The MCP server's "active board" is not trustworthy on its own** — `@delorenj/mcp-server-trello`
+persists it in `$HOME/.trello-mcp/config.json`, and on a machine with several Trello-backed
+projects, whichever project last called `set_active_board` silently repoints every other
+project's *next* server start (their launcher's own `TRELLO_BOARD_ID` gets overridden by that
+saved file). This step resolves and verifies the actual project board before doing anything else,
+so a poisoned active board is caught here instead of surfacing later as a card moved onto — or
+read from — the wrong board.
+
+#### Step 1a: Resolve and verify the project's board (blocking — everything else depends on this)
+
+1. **Resolve the project's board id:**
+   ```bash
+   cat .claude/trello-home/.trello-mcp/config.json 2>/dev/null
+   ```
+   This is written by the project's `.claude/scripts/trello-mcp.sh` launcher on every start and is
+   **exactly what the running server loaded** — reading it means this skill cannot disagree with
+   the server. Take its `boardId`.
+
+   If the file doesn't exist (the MCP server hasn't been launched via this project's script yet),
+   fall back to the shared resolver instead of re-deriving the credential chain by hand:
+   ```bash
+   bash -c '. .claude/scripts/trello-env.sh; trello_env_load "$PWD" >/dev/null 2>&1; printf "%s" "${TRELLO_BOARD_ID:-}"'
+   ```
+   If still empty, abort with: *"TRELLO_BOARD_ID not set — add it to this project's `.env`
+   (SilverStripe 4+) or `_ss_environment.php` (SilverStripe 3)."*
+
+   Save the result as `projectBoardId`. **Never hardcode a board id in this skill or in
+   `CLAUDE.md`** — it is shared across every project that installs it, each with its own board.
+
+2. **Get active board info** (run this in parallel with call 1 above — it has no dependency on it):
+   ```
+   get_active_board_info
+   ```
+
+**Verify before doing anything else.** `projectBoardId` is the project's 8-char Trello
+**shortLink** (e.g. `dfeQfgbc`); `get_active_board_info` returns the full board object with both
+`id` (24-char hex) and `shortLink`. Compare `projectBoardId` against *either* field on that
+object:
+- **Match** → save the returned `id` as `projectBoardIdLong`. This is the value every subsequent
+  `idBoard` comparison in this skill uses (Trello's card/list objects only ever carry the long
+  `id`, never the shortLink). Continue to Step 1b.
+- **Mismatch** → the server loaded a different board than this project's. **Abort** with:
+  *"Active Trello board (`<name>`, `<id>`) does not match this project's board (`<projectBoardId>`).
+  The Trello MCP server's `~/.trello-mcp/config.json` is shared across projects on this machine —
+  another project's `set_active_board` call likely overwrote it. Restart the Trello MCP server
+  for this project (its launcher re-pins the correct board on every start) rather than calling
+  `set_active_board` yourself — that would only push the problem onto whichever project runs
+  next."* Do **not** call `set_active_board` to "fix" this — it rewrites the shared file.
+
+#### Step 1b: Fetch board data, identify user, and resolve default branch (parallel)
+
+Now that `projectBoardId` is verified, make these five calls **in parallel** (they have no
+dependencies on each other):
 
 1. **Get all lists:**
    ```
-   get_lists
+   get_lists  boardId: <projectBoardId>
    ```
 
 2. **Get git user name:**
@@ -48,7 +100,7 @@ Make these five calls **in parallel** (they have no dependencies on each other):
 
 3. **Get board members:**
    ```
-   get_board_members
+   get_board_members  boardId: <projectBoardId>
    ```
 
 4. **Read git config for default branch:**
@@ -95,7 +147,9 @@ Fetch all cards assigned to the current user (this is a lightweight call that av
 get_my_cards
 ```
 
-Filter the results by `idList` to separate:
+**This endpoint is board-agnostic** — `/members/me/cards` returns cards from *every* board the
+user belongs to, not just this project's. **First filter by `idBoard === projectBoardIdLong`**
+(from Step 1a), then filter the remainder by `idList` to separate:
 - **My in-progress cards** — cards where `idList` matches the in-progress list ID
 - **My to-do cards** — cards where `idList` matches the To-Do list ID
 
@@ -162,7 +216,10 @@ If the card has image attachments (`mimeType` starts with `image/`), download th
 
 **Skip oversized attachments:** Trello's attachment object includes a `bytes` field. Skip any attachment larger than **10 MB** — note it in the plan file as "skipped (too large)" with its URL for manual review.
 
-**Authentication:** Trello file downloads require an OAuth `Authorization` header — query-param auth (`?key=&token=`) does **not** work for download URLs. Read the Trello API key and token from the environment variables `TRELLO_API_KEY` and `TRELLO_TOKEN`. If they are not set in the environment, extract them from the MCP server launch script (`.claude/scripts/trello-mcp.sh`) or from `.env` / `_ss_environment.php` in the project root using the same resolution order as the MCP script.
+**Authentication:** Trello file downloads require an OAuth `Authorization` header — query-param auth (`?key=&token=`) does **not** work for download URLs. Read the Trello API key and token from the environment variables `TRELLO_API_KEY` and `TRELLO_TOKEN`. If they are not set in the environment, resolve them with the same script the MCP launcher uses:
+```bash
+bash -c '. .claude/scripts/trello-env.sh; trello_env_load "$PWD" >/dev/null 2>&1; printf "%s\n%s" "$TRELLO_API_KEY" "$TRELLO_TOKEN"'
+```
 
 **File extension mapping:** Derive `<ext>` from the `mimeType` using these conventions:
 
@@ -482,13 +539,24 @@ After writing the file, **output the Implementation Plan section to the user** s
 
 #### Step 10a: Move card on Trello
 
+**Before moving, assert `card.idBoard === projectBoardIdLong`** (from Step 1a). This is the
+stop-gap against a foreign card getting relocated onto this board: if the active-board check in
+Step 1a somehow passed but the individual card still belongs to a different board — e.g. it was
+picked up via a stale `get_my_cards` result — moving it would physically transplant it onto this
+project's board. On mismatch, **skip this card** — do not move or assign it — report it to the
+user as "found on the wrong board (`<its idBoard>`), skipping" and return to Step 3 to pick the
+next candidate instead.
+
 **If the card came from the To-Do list (Step 3):** Move it to the in-progress list identified in Step 1:
 
 ```
-move_card  cardId: <card id>  listId: <in-progress list id>  boardId: <board id>
+move_card  cardId: <card id>  listId: <in-progress list id>  boardId: <projectBoardId>
 ```
 
-**Important:** `boardId` must be passed explicitly — the default board is not applied automatically by `move_card`.
+**Important:** `boardId` must be passed explicitly — `move_card` falls back to the server's
+`TRELLO_BOARD_ID` env value, **not** the saved active-board file, so it can silently disagree
+with the board that `get_lists`/`get_board_members` just read from. Passing `projectBoardId`
+here removes that gap entirely.
 
 Tell the user: `Moved card to "<list name>".`
 
@@ -502,7 +570,7 @@ If the To-Do list is the last list on the board (no list after it), warn the use
 
 ```json
 {
-  "boardId": "<board id>",
+  "boardId": "<projectBoardId>",
   "cardId": "<card id>",
   "cardName": "<card title>",
   "cardUrl": "<card URL>",
@@ -558,7 +626,7 @@ Use `AskUserQuestion` to ask what the user wants to do next:
      ```bash
      curl -s -X PUT "https://api.trello.com/1/cards/<card-id>?pos=bottom&key=<TRELLO_API_KEY>&token=<TRELLO_TOKEN>"
      ```
-     Read the API key and token using the same credential resolution as Step 4b.
+     Resolve the API key and token the same way as Step 4b (`.claude/scripts/trello-env.sh`).
   3. Unassign the current user from the card (if they were assigned in Step 3).
   4. Delete the plan file if one was just created in Step 9.
   5. **Go back to Step 3** to pick the next card. Reuse the already-fetched card list from Step 3 — do not re-fetch from Trello. Just exclude the skipped card and pick the next oldest. If no cards remain, tell the user there are no more cards available.
@@ -576,6 +644,9 @@ Use `AskUserQuestion` to ask what the user wants to do next:
 | List is empty | Tell user the list is empty |
 | Card has no description | Proceed with title only; note the missing description in open questions |
 | MCP tool call fails | Show the error and suggest the user checks their Trello API credentials |
+| Active board ≠ project board (Step 1a) | **Abort — do not call `set_active_board`.** Explain that `~/.trello-mcp/config.json` is shared across every Trello-backed project on the machine and another project's `set_active_board` call likely overwrote it; tell the user to restart this project's Trello MCP server (its launcher re-pins the board on every start) |
+| A picked-up card's `idBoard` ≠ `projectBoardIdLong` (Step 10a) | Skip that card without moving or assigning it, report it to the user, and return to Step 3 for the next candidate |
+| `TRELLO_BOARD_ID` unresolved (Step 1a) | Abort: tell the user to add it to this project's `.env` (SilverStripe 4+) or `_ss_environment.php` (SilverStripe 3) |
 
 ### Fixing a broken Trello MCP
 

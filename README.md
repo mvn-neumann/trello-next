@@ -49,20 +49,29 @@ define('TRELLO_BOARD_ID', 'your-board-id');
 
 The board ID is the short code in your Trello board URL: `https://trello.com/b/<BOARD_ID>/board-name`.
 
+`trello-env.sh` picks `.env` vs `_ss_environment.php` by file presence: if `.env` exists it's
+treated as SilverStripe 4+/5, otherwise `_ss_environment.php` is treated as SilverStripe 3. Don't
+keep both in the same project — only one is read.
+
 ### 2. MCP Server
 
 Add the Trello MCP entry to your project's `.mcp.json`. The launcher script reads credentials from the project root automatically — no secrets in the config file.
 
-**Option A: Symlink the shared script** (recommended — stays up to date)
+Both `trello-mcp.sh` and `trello-env.sh` (the credential resolver it sources) need to be
+present — `trello-env.sh` is not optional, `trello-mcp.sh` fails immediately without it.
+
+**Option A: Symlink the shared scripts** (recommended — stays up to date)
 ```bash
 mkdir -p .claude/scripts
 ln -sf ~/.claude/scripts/trello-mcp.sh .claude/scripts/trello-mcp.sh
+ln -sf ~/.claude/scripts/trello-env.sh .claude/scripts/trello-env.sh
 ```
 
-**Option B: Copy the script**
+**Option B: Copy the scripts**
 ```bash
 mkdir -p .claude/scripts
 cp ~/.claude/scripts/trello-mcp.sh .claude/scripts/trello-mcp.sh
+cp ~/.claude/scripts/trello-env.sh .claude/scripts/trello-env.sh
 ```
 
 Then add to `.mcp.json`:
@@ -83,10 +92,44 @@ Add these to your project's `.gitignore` — they are generated at runtime:
 
 ```gitignore
 .claude/trello-active-card.json
+.claude/trello-home/
 .plans/
 .specs/
 .reports/
 ```
+
+## Running Multiple Trello-Backed Projects on One Machine
+
+`@delorenj/mcp-server-trello` persists its "active board" to a **single file on the whole
+machine**: `$HOME/.trello-mcp/config.json`. It reads that file on every server start and lets it
+**override** whatever `TRELLO_BOARD_ID` the launcher exported — and any call to
+`set_active_board` (from any project, any session) **overwrites it**. If you only ever work on
+one Trello board, this is invisible. If you work on several projects, each with its own board,
+it means:
+
+- Project A calls `set_active_board` (or the skill infers it should) → the global file now holds
+  A's board.
+- Project B's Trello MCP server restarts (new session, IDE reload, etc.) → it reads the global
+  file, silently loads **A's board** instead of B's, ignoring B's own `TRELLO_BOARD_ID`.
+- `/trello-next` in B now reads cards from A's board, and — because `move_card` and `get_lists`
+  resolve the board *differently* internally — can end up moving a card from A onto B's board, or
+  vice versa.
+
+`trello-mcp.sh` fixes this by giving the server a **private `$HOME`** per project
+(`.claude/trello-home/`), so its state file can no longer be shared, and by **pinning** the
+project's resolved `TRELLO_BOARD_ID` into that private file on every launch — a stray
+`set_active_board` call self-heals on the next restart instead of poisoning other projects.
+
+`skills/trello-next/SKILL.md` and `skills/git-done/SKILL.md` additionally never trust the
+server's active board blindly: they resolve the project's board id independently (from the
+pinned config or via `trello-env.sh`), verify it against `get_active_board_info`, and **abort
+rather than proceed** on a mismatch.
+
+**Rule of thumb: never call `set_active_board` yourself, and never let a skill call it on your
+behalf.** It only ever helps the project you're in right now, at the cost of poisoning every
+sibling project's next server start. If a skill reports the active board doesn't match the
+project's board, the fix is to restart that project's Trello MCP server (its launcher re-pins the
+correct board), not to call `set_active_board`.
 
 ## Trello Board Layout
 
@@ -159,7 +202,8 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 │   └── log-time/
 │       └── SKILL.md              # Git-based time estimation posted to Trello
 └── scripts/
-    ├── trello-mcp.sh             # MCP launcher (reads creds from .env or _ss_environment.php)
+    ├── trello-mcp.sh             # MCP launcher — pins the board into a private $HOME (see below)
+    ├── trello-env.sh             # Shared credential resolver, sourced by trello-mcp.sh and skills
     └── trello-attach.sh          # Uploads files as Trello card attachments
 ```
 

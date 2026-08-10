@@ -116,14 +116,24 @@ git push
 
 Check if `.claude/trello-active-card.json` exists. If it does:
 
-1. Read the file to get `branchName`, `cardId`, `cardAuthorUsername`, `currentListId`, `currentListPos`, and `lists`.
+1. Read the file to get `boardId`, `branchName`, `cardId`, `cardAuthorUsername`, `currentListId`, `currentListPos`, and `lists`.
 2. **Branch guard:** Compare `branchName` from the state file against the branch being merged (saved in Step 3). If they don't match, **skip the entire Trello step** — the merge is unrelated to the active card. Do NOT delete the state file. Tell the user: `Skipped Trello — merged branch "{branch}" doesn't match active card branch "{branchName}".`
-3. Sort `lists` by `pos` ascending. Find the list whose `pos` is the smallest value **greater than** `currentListPos`. This is the next list on the board.
-4. If a next list exists, move the card there using the Trello MCP:
+3. **Board guard:** Call `get_active_board_info` and compare `boardId` from the state file against
+   the result's `id` **or** `shortLink`. `@delorenj/mcp-server-trello` persists its "active board"
+   in a file shared across every Trello-backed project on this machine
+   (`~/.trello-mcp/config.json`); if another project called `set_active_board` since this card was
+   picked up, the server may now be pointed at a different board than the one this card lives on.
+   On mismatch: **skip the entire Trello step** (do NOT move the card or delete the state file —
+   the next `/git-done` run should retry once the server is pointed correctly again). Tell the
+   user: `Skipped Trello — active board doesn't match this card's board ("<boardId>"). Restart the
+   Trello MCP server for this project.` **Never call `set_active_board`** to correct this — it
+   would rewrite the shared file and push the problem onto whichever project runs next.
+4. Sort `lists` by `pos` ascending. Find the list whose `pos` is the smallest value **greater than** `currentListPos`. This is the next list on the board.
+5. If a next list exists, move the card there using the Trello MCP:
    ```
-   move_card  cardId: <cardId>  listId: <next list id>  boardId: <board id>
+   move_card  cardId: <cardId>  listId: <next list id>  boardId: <boardId from state file>
    ```
-5. **Add a summary comment** to the card explaining what was changed. The comment is for non-technical users:
+6. **Add a summary comment** to the card explaining what was changed. The comment is for non-technical users:
    - **Start with `@<cardAuthorUsername>`** from the state file so the card author gets notified.
    - Write in a **casual, simple tone** — no technical jargon (no "CSS", "template", "commit", "merge", etc.)
    - **Language:** Match the language the card author used in the card description/comments. Default to **German** if unclear. Check the card's comments via `get_card_comments` to determine the language.
@@ -133,7 +143,7 @@ Check if `.claude/trello-active-card.json` exists. If it does:
    - Example (English): `@author The heading now shows up centered on all pages.`
    - Use `add_comment` with `cardId` and the summary text.
 
-6. Delete the state file and the plan file:
+7. Delete the state file and the plan file:
    ```bash
    rm .claude/trello-active-card.json
    rm .plans/<branchName>.md 2>/dev/null
@@ -169,6 +179,7 @@ Trello: moved "Newsletter Popup: Spelling Error" → "Review"
 | Merge conflict | Stop, report conflict, do not auto-resolve, do not push |
 | Push rejected | Stop, report rejection (e.g. non-fast-forward) |
 | Not a fast-forward | Stop, report to user, do not merge automatically |
+| Active Trello board ≠ card's board (Step 7) | Skip the Trello step only (merge/push still complete); keep the state file for a later retry; never call `set_active_board` |
 
 ### Changing the Default Branch
 
