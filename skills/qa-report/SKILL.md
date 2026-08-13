@@ -13,7 +13,9 @@ This skill verifies implemented changes by:
 4. Marking what changed with simple stroke-only annotations (rectangles, arrows, numbers)
 5. For form targets: filling the form with marked test data, submitting it (on dev **and**
    live), and verifying the result/confirmation page
-6. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
+6. Building a side-by-side before/after composite (live left, dev right) for every target
+   that has both shots
+7. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
 
 ## Usage
 
@@ -274,6 +276,36 @@ For each verification target (run in parallel across targets where the tool supp
    end), and number/letter labels. Do not draw filled shapes or semi-transparent overlays;
    they obscure the underlying UI the reviewer needs to see.
 
+4. **Before/after comparison composite** (whenever both a `-live` and a `-dev` shot exist for
+   the target): build one side-by-side image so the reviewer sees the change without flipping
+   between screenshots — live (before) on the left, dev (after) on the right.
+
+   - **Match the shots first.** Both screenshots must show the same page state (same
+     slide/carousel position, same scroll offset, same viewport) — freeze animations and
+     sliders via `browser_evaluate` before each shot if needed. A comparison of two different
+     states is misleading; if matching is impossible, skip the composite and note why in the
+     report.
+   - **Crop to the changed region** when the target's `annotations` pin the change to an
+     element: read the element's bounding box via `browser_evaluate`
+     (`el.getBoundingClientRect()`) and crop both shots to that region. For page-wide changes
+     use the full viewport shots uncropped.
+   - **Compose with ImageMagick** (`convert`/`montage`):
+     ```bash
+     # optional: crop both shots to the changed region (x/y/w/h from getBoundingClientRect)
+     convert .reports/screenshots/<...>-live.png -crop <w>x<h>+<x>+<y> +repage /tmp/qa-before.png
+     convert .reports/screenshots/<...>-dev.png  -crop <w>x<h>+<x>+<y> +repage /tmp/qa-after.png
+     # label and join: before (live) left, after (dev) right
+     montage -label "VORHER (live)" /tmp/qa-before.png -label "NACHHER (dev)" /tmp/qa-after.png \
+       -tile 2x1 -geometry +8+8 -pointsize 24 \
+       .reports/screenshots/<branch-name>-<n>-<slug>-compare.png
+     ```
+   - **Read the composite back** with the `Read` tool: labels must sit over the correct halves
+     and the difference must be visible at this size. If the change is too subtle at
+     full-page scale (e.g. image sharpness, small spacing), crop tighter or re-capture at a
+     larger viewport and rebuild.
+   - Skip silently when the target has no live shot (new page, live unreachable, `liveUrl`
+     opted out) — the report then keeps the separate dev/live images only.
+
 #### Form targets: always test the submission
 
 For every target marked `form: true`, testing the actual submission is **mandatory** — on
@@ -376,6 +408,11 @@ Write this content to the report file:
 **Result:** ✅ Pass / ❌ Fail / ⚠️ Needs review
 
 <One sentence observation: what the screenshot shows, or what is wrong if Fail>
+
+**Before/after comparison (live vs. dev):**
+![<check description> — before/after](./screenshots/<branch-name>-<n>-<slug>-compare.png)
+<omit when no live shot exists for this target, or note why the composite was skipped
+(e.g. page states could not be matched)>
 
 **Before (live):**
 ![<check description> — live](./screenshots/<branch-name>-<n>-<slug>-live.png)
@@ -484,6 +521,7 @@ If the state file does not exist, skip this step silently.
 | `.reports/<branch-name>.md` | Full QA report with pass/fail results and before/after screenshot references |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-dev.png` | Clean dev-site screenshot, overlays closed |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-live.png` | Clean live-site screenshot, overlays closed (only when `liveUrl` is set and reachable for this target) |
+| `.reports/screenshots/<branch-name>-<n>-<slug>-compare.png` | Side-by-side before/after composite: live (before) left, dev (after) right, cropped to the changed region when annotations pin one (only when both a live and a dev shot exist) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png` | Dev-site screenshot with stroke-only change markers (rectangles/lines/arrows/numbers) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-filled.png` | Form target only: form filled with marked test data, before submit (`-filled-live.png` for the live run) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-result.png` | Form target only: page shown after submitting — confirmation or error (`-result-live.png` for the live run) |
