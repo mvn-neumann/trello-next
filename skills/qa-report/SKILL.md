@@ -17,6 +17,12 @@ This skill verifies implemented changes by:
    that has both shots
 7. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
 
+**This skill always produces `.reports/<branch-name>.md`.** No matter how Steps 1-4 go —
+missing plan file, no verification targets found, browser tool unavailable, dev/live site
+unreachable, user bails on providing manual screenshots — Step 5 still runs and still writes
+the file, noting whatever couldn't be done. A run that produces no report file is a bug in
+this skill's execution, not an acceptable outcome.
+
 ## Usage
 
 ```
@@ -376,6 +382,16 @@ After all screenshots are collected, **read each file** using the `Read` tool so
 
 **File path:** `.reports/<branch-name>.md`
 
+**This step is mandatory and unconditional.** Reach it and write the file even if:
+- no verification targets could be identified (write the report with an empty/near-empty
+  Verification Results section and a Notes entry explaining why)
+- every browser tool failed and the user didn't supply manual screenshots (write the report
+  with ⚠️ **Needs review** for every target and a Notes entry naming what's missing)
+- the branch has no diff yet, or no plan/state file was found
+
+If `<branch-name>` cannot be determined at all (no git repo, no branch, nothing), fall back to
+a fixed filename `.reports/qa-report-<YYYY-MM-DD-HHmm>.md` rather than skipping the write.
+
 ```bash
 mkdir -p .reports
 ```
@@ -459,10 +475,11 @@ Leave blank if none.>
 - ❌ **Fail** — the change is missing, broken, or visually wrong; describe the specific problem
 - ⚠️ **Needs review** — change appears to be there but cannot be fully confirmed from a static screenshot (e.g. requires interaction)
 
-After writing the file, output a summary to the user:
+After writing the file, output a summary to the user. **The report's file path is always the
+first line of this summary, on its own — never buried after the results, never omitted:**
 
 ```
-Report written to .reports/<branch-name>.md
+📄 QA report: .reports/<branch-name>.md
 
 Results:
 ✅ 2 passed
@@ -470,7 +487,9 @@ Results:
 ⚠️ 1 needs review — <brief description>
 ```
 
-If any items **failed**, describe them clearly so the developer can act immediately.
+If any items **failed**, describe them clearly so the developer can act immediately. This
+summary line is required even when Step 5 wrote a degraded report (no targets, no screenshots,
+tool unavailable) — state the file path first, then explain what's missing instead of results.
 
 ### Step 6: Offer to attach screenshots to Trello
 
@@ -532,11 +551,13 @@ If the state file does not exist, skip this step silently.
 
 | Situation | Action |
 |-----------|--------|
-| No plan file or state file | Ask user what was implemented and what URLs to check |
-| Dev URL unreachable (connection refused / timeout) | Warn user; ask for the correct URL or to start the dev server first |
+| No plan file or state file | Ask user what was implemented and what URLs to check; if they can't say, still write the report (Step 5) noting no targets could be identified |
+| Dev URL unreachable (connection refused / timeout) | Warn user; ask for the correct URL or to start the dev server first; still write the report noting the dev site was unreachable |
 | Live URL unreachable (connection refused / timeout / 404) | Skip the live shot for that target, mark it "Live site not available" in the report, continue with dev-only |
 | Overlay (debug bar / cookie consent / dialog) still visible after Step 3.5 | Take a `browser_snapshot` to find its selector, hide that specific element, re-take the screenshot |
-| Browser MCP unavailable | Fall back to manual screenshot workflow (Step 4 Option C) |
+| Browser MCP unavailable | Fall back to manual screenshot workflow (Step 4 Option C); if the user provides nothing, still write the report marking every target ⚠️ **Needs review** |
 | Screenshot save fails | Note it in the report as "screenshot unavailable" and continue |
-| No changes on branch | Warn user; still offer to verify any URL manually |
+| No changes on branch | Warn user; still offer to verify any URL manually; still write the report noting there was nothing to diff |
+| No verification targets identifiable at all | Still write the report — empty Verification Results section, Notes explaining nothing could be inferred |
 | Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |
+| Any other failure that would otherwise abort the skill | Write the report first with whatever was gathered, THEN surface the error to the user — never let an error skip Step 5 |
