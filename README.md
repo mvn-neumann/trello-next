@@ -264,6 +264,18 @@ This file is created automatically when `/git-new`, `/git-done`, or `/trello-nex
 
 You can also create it manually. To change the default branch at any time, say "change default branch" during a skill run, or edit the file directly.
 
+Optionally add `selfTrelloUsername` — your own Trello username on this project's board. `/git-done`
+uses it so its card comment never `@`-mentions you and never picks up its reply language from your
+own comments. Without it, `/git-done` falls back to matching `git config user.name` against the
+board members at runtime.
+
+```json
+{
+  "defaultBranch": "master",
+  "selfTrelloUsername": "marvin.neumann"
+}
+```
+
 ## License
 
 MIT

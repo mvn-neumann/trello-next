@@ -133,15 +133,47 @@ Check if `.claude/trello-active-card.json` exists. If it does:
    ```
    move_card  cardId: <cardId>  listId: <next list id>  boardId: <boardId from state file>
    ```
-6. **Add a summary comment** to the card explaining what was changed. The comment is for non-technical users:
-   - **Start with `@<cardAuthorUsername>`** from the state file so the card author gets notified.
-   - Write in a **casual, simple tone** — no technical jargon (no "CSS", "template", "commit", "merge", etc.)
-   - **Language:** Match the language the card author used in the card description/comments. Default to **German** if unclear. Check the card's comments via `get_card_comments` to determine the language.
-   - Summarize **what the user will see differently**, not what code changed.
-   - Keep it to 1-3 short sentences.
-   - Example (German): `@author Die Überschriften werden jetzt auf allen Seiten mittig angezeigt.`
-   - Example (English): `@author The heading now shows up centered on all pages.`
-   - Use `add_comment` with `cardId` and the summary text.
+6. **Add a summary comment** to the card explaining what was changed. The comment is for the
+   client, not for you.
+
+   **Who to notify**
+   - Work out **who you are on Trello** so you never @-mention yourself: read
+     `selfTrelloUsername` from `.claude/git-config.json` if present; otherwise call
+     `get_board_members boardId: <boardId from state file>` and match `fullName` against
+     `git config user.name` (case-insensitive). If neither resolves, skip the self-exclusion.
+   - Fetch the card's comments with `get_card_comments cardId: <cardId>`.
+   - Build the mention list:
+     1. The author of the **most recent comment** — but only if this branch's work was a
+        response to that comment (feedback, bug report, change request). If the work was
+        unrelated to it, leave them out.
+     2. The **card author** (`cardAuthorUsername` from the state file).
+   - **Remove yourself** and remove duplicates — card author and last commenter are often the
+     same person.
+   - Start the comment with the remaining `@username` mentions, space-separated. If the list is
+     empty (you were the only person involved), post the comment without a mention.
+
+   **Language**
+   - Write in the language of the **most recent comment that is not yours**.
+   - If there is none, use the language the **card author** used in the card description or
+     their own comments.
+   - Default to **German** if neither is clear.
+   - **Never** take the language from your own comments, the branch name, the commit messages,
+     or the language you and the user spoke in this session.
+
+   **Wording — short and simple**
+   - 1-3 short sentences. Say what the person will **see** differently, not what code changed.
+   - Everyday words. No jargon — no "CSS", "template", "commit", "merge", "deployed".
+   - No filler ("erfolgreich", "wie gewünscht", "successfully", "as requested") and no
+     descriptions of the process itself.
+   - Mirror the tone of the person you are answering — if their comments are short and casual,
+     match that. No headings, no bullet icons, no corporate structure.
+   - Bad: `@anne Nach eingehender Prüfung wurde das CSS angepasst, sodass die Überschrift nun
+     erfolgreich zentriert dargestellt wird.`
+   - Good: `@anne Die Überschrift steht jetzt mittig.`
+   - Example (answering feedback): `@anne @autor Die Telefonnummer ist jetzt auch auf dem Handy
+     klickbar.`
+   - Example (English card): `@author The heading now shows up centered on all pages.`
+   - Use `add_comment` with `cardId` and the comment text.
 
 7. Delete the state file and the plan file:
    ```bash
