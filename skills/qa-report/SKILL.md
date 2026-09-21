@@ -15,7 +15,8 @@ This skill verifies implemented changes by:
    live), and verifying the result/confirmation page
 6. Building a side-by-side before/after composite (live left, dev right) for every target
    that has both shots
-7. Writing a report to `.reports/<branch-name>.md` with embedded before/after screenshots
+7. Writing a short report in the user's language to `.reports/<branch-name>.md`, with embedded
+   before/after screenshots
 
 **This skill always produces `.reports/<branch-name>.md`.** No matter how Steps 1-4 go —
 missing plan file, no verification targets found, browser tool unavailable, dev/live site
@@ -305,6 +306,8 @@ For each verification target (run in parallel across targets where the tool supp
        -tile 2x1 -geometry +8+8 -pointsize 24 \
        .reports/screenshots/<branch-name>-<n>-<slug>-compare.png
      ```
+     The labels follow the report's language (see **Report language and wording** in Step 5) —
+     `VORHER`/`NACHHER` for German, `BEFORE`/`AFTER` for English.
    - **Read the composite back** with the `Read` tool: labels must sit over the correct halves
      and the difference must be visible at this size. If the change is too subtle at
      full-page scale (e.g. image sharpness, small spacing), crop tighter or re-capture at a
@@ -396,6 +399,51 @@ a fixed filename `.reports/qa-report-<YYYY-MM-DD-HHmm>.md` rather than skipping 
 mkdir -p .reports
 ```
 
+#### Report language and wording
+
+**Language**
+- Write the report in the **same language as the user's prompt that triggered this run** (a
+  German prompt → German report, an English prompt → English report).
+- An explicit instruction from the user overrides this (e.g. "write the report in English").
+- If the trigger was a bare `/qa-report` with no other words, fall back to the language of the
+  Trello card title or plan file; if that's unclear too, default to German.
+- The chosen language covers **everything readable**: headings, check descriptions, observation
+  sentences, the "Changes marked" list, Notes, the `montage` before/after labels (Step 4), and
+  the chat summary at the end of this step.
+- Not affected by the language choice: file paths and filenames, image paths, raw `git log` /
+  `git diff --stat` output, the ✅ / ❌ / ⚠️ markers, and the Implementation Checklist — that's
+  copied **verbatim** from the plan file, in whatever language it's already written.
+- The template below is written in English; when writing German, use this heading map instead
+  of translating ad hoc:
+
+  | English (template) | German |
+  |---|---|
+  | QA Report | QA-Bericht |
+  | Branch / Card / Date / Author | Branch / Karte / Datum / Autor |
+  | Summary of Changes | Änderungen |
+  | Changed files | Geänderte Dateien |
+  | Verification Results | Ergebnisse |
+  | URL / Result | URL / Ergebnis |
+  | Pass / Fail / Needs review | OK / Fehler / Zu prüfen |
+  | Before/after comparison (live vs. dev) | Vorher/Nachher-Vergleich (live vs. dev) |
+  | Before (live) / After (dev, annotated) | Vorher (live) / Nachher (dev, markiert) |
+  | Changes marked | Markierte Änderungen |
+  | Filled form (dev) / Result after submit (dev) | Ausgefülltes Formular (dev) / Ergebnis nach dem Absenden (dev) |
+  | Implementation Checklist | Umsetzungs-Checkliste |
+  | Notes | Hinweise |
+  | _Live site not available — dev-only capture._ | _Live-Seite nicht erreichbar — nur Dev-Aufnahme._ |
+  | No plan file found. | Kein Plan-File gefunden. |
+
+**Wording — short and simple**
+- One short sentence per observation. Say what the screenshot shows, nothing more.
+- Everyday words, no jargon, no filler ("successfully", "comprehensive", "as expected", "it
+  should be noted that").
+- Don't describe the QA process itself or how carefully something was checked — only the result.
+- Bullet points instead of paragraphs; never more than three sentences in a row.
+- Bad: "Nach eingehender Prüfung der Seite konnte erfolgreich verifiziert werden, dass die
+  Überschrift nun wie gewünscht zentriert dargestellt wird."
+- Good: "Die Überschrift steht jetzt mittig."
+
 Write this content to the report file:
 
 ```markdown
@@ -475,8 +523,10 @@ Leave blank if none.>
 - ❌ **Fail** — the change is missing, broken, or visually wrong; describe the specific problem
 - ⚠️ **Needs review** — change appears to be there but cannot be fully confirmed from a static screenshot (e.g. requires interaction)
 
-After writing the file, output a summary to the user. **The report's file path is always the
-first line of this summary, on its own — never buried after the results, never omitted:**
+After writing the file, output a summary to the user, in the report's language (see **Report
+language and wording** above — e.g. `📄 QA-Bericht:` for German, `📄 QA report:` for English).
+**The report's file path is always the first line of this summary, on its own — never buried
+after the results, never omitted.** Keep each result on one short line:
 
 ```
 📄 QA report: .reports/<branch-name>.md
