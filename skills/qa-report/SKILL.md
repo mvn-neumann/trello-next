@@ -32,7 +32,7 @@ this skill's execution, not an acceptable outcome.
 
 ## Flow Overview
 
-Steps 1 → 2 → 3 → 3.5 → 4 → 5 → 6
+Steps 1 → 2 → 3 → 3.5 → 4 → 4.5 (close the browser) → 5 → 6
 
 ## Instructions
 
@@ -184,6 +184,10 @@ mcp__playwright__browser_evaluate  function: () => {
 }
 ```
 
+Pages with CSS `scroll-behavior: smooth` animate `scrollTo` / `scrollIntoView`, so a position
+or bounding box read right afterwards is still the old one. Scroll instantly before measuring
+or capturing: `window.scrollTo({top, behavior: 'instant'})`.
+
 Also press Escape and dismiss any native browser dialog, in case a JS `alert`/`confirm` is
 open:
 ```
@@ -207,9 +211,28 @@ For each verification target, capture up to three images: `-dev` (clean dev shot
 (clean live shot, if `liveUrl` is set and reachable), and `-annotated` (dev shot with the
 change markers drawn on).
 
+**Browser hygiene: keep ONE page, close everything in Step 4.5.** Every page you open stays
+alive until it is closed, and every `isolatedContext` is a whole extra browser context. A run
+that opened one page per viewport (11 pages, each in its own `isolatedContext`) left a pile
+of Chrome instances behind.
+- Open **one** page for the whole run and reuse it for the dev shot, the annotated shot and
+  the live shot of every target. Do not open a page per URL, per target or per viewport.
+- Several viewports ("common screen widths"): work through them **one after another on that
+  same page**. Change the size (`browser_resize`, or `emulate` with a `viewport` such as
+  `390x844x1,mobile,touch` / `resize_page` on chrome-devtools), re-navigate, capture, next
+  width. Use `deviceScaleFactor` 1 so crop coordinates equal CSS pixels. Reset the emulation
+  afterwards (`emulate` with an empty `viewport`).
+- Do not pass `isolatedContext` unless a target truly needs a clean cookie jar (for example a
+  form test that must start from a known session). Then open exactly one such page and close
+  it right after the test.
+- Do not fan out parallel pages to save time. If a run really needs more than one page, keep
+  it to 3 at most and write down every page id you open so Step 4.5 can close them.
+- Playwright MCP answering "Browser is already in use for ..." means another session holds the
+  profile. Use the chrome-devtools MCP instead (same rules).
+
 #### Option A: Playwright MCP
 
-For each verification target (run in parallel across targets where the tool supports it):
+For each verification target, one after another on the single page:
 
 1. **Dev shot:**
    ```
@@ -381,6 +404,24 @@ in the report that the change markers are missing and describe the change in pro
 
 After all screenshots are collected, **read each file** using the `Read` tool so the images are visible inline and can be analyzed for pass/fail.
 
+### Step 4.5: Close the browser and remove temp files
+
+**Mandatory, and it runs before Step 5 even if a browser step failed halfway.** Do not leave
+pages, tabs or browser contexts open. Close everything this run opened:
+
+- **chrome-devtools MCP:** call `list_pages`, then `close_page` for every page this run opened,
+  **highest id first** (the ids renumber when a page closes). The last remaining page cannot
+  be closed; leaving a single `about:blank` is fine. Do not close pages that were already open
+  before the run started (the first page in the list). Call `list_pages` again and confirm
+  that only the pre-existing page is left.
+- **Playwright MCP:** list the tabs with `browser_tabs`, close every extra tab, then call
+  `browser_close` so the headless Chrome exits and releases the profile lock.
+- **Any tool:** remove temp files created for the run (cookie jars with session ids, crop and
+  montage parts under `/tmp` or the scratchpad). Keep `.reports/` untouched.
+- Never kill Chrome processes by name or PID. Other sessions share the machine and their
+  browsers are not yours to stop. Closing pages through the MCP tool is enough, since the
+  renderer processes exit with their pages.
+
 ### Step 5: Write the report
 
 **File path:** `.reports/<branch-name>.md`
@@ -391,6 +432,8 @@ After all screenshots are collected, **read each file** using the `Read` tool so
 - every browser tool failed and the user didn't supply manual screenshots (write the report
   with ⚠️ **Needs review** for every target and a Notes entry naming what's missing)
 - the branch has no diff yet, or no plan/state file was found
+
+Step 4.5 (close the browser) still runs first, in every one of these cases.
 
 If `<branch-name>` cannot be determined at all (no git repo, no branch, nothing), fall back to
 a fixed filename `.reports/qa-report-<YYYY-MM-DD-HHmm>.md` rather than skipping the write.
@@ -607,6 +650,7 @@ If the state file does not exist, skip this step silently.
 | Overlay (debug bar / cookie consent / dialog) still visible after Step 3.5 | Take a `browser_snapshot` to find its selector, hide that specific element, re-take the screenshot |
 | Browser MCP unavailable | Fall back to manual screenshot workflow (Step 4 Option C); if the user provides nothing, still write the report marking every target ⚠️ **Needs review** |
 | Screenshot save fails | Note it in the report as "screenshot unavailable" and continue |
+| A browser step fails after pages were opened | Run Step 4.5 first (close every page this run opened), then write the report. A failed run must not leave Chrome instances behind |
 | No changes on branch | Warn user; still offer to verify any URL manually; still write the report noting there was nothing to diff |
 | No verification targets identifiable at all | Still write the report — empty Verification Results section, Notes explaining nothing could be inferred |
 | Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |
