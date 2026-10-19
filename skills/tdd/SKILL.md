@@ -275,6 +275,10 @@ If there were no visual scenarios (all testable), omit the `/qa-report` line.
 
 Both keys are optional. Omit a key if the project does not use that test type.
 
+`/qa-report` stores its code quality tools in the same file under a `"quality"` key. When this
+skill writes the file, **merge** into the existing JSON (read, set `phpunit` / `playwright`, write
+back) — never overwrite the file and drop other keys.
+
 ---
 
 ## Error Handling

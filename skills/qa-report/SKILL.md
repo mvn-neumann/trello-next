@@ -15,8 +15,10 @@ This skill verifies implemented changes by:
    live), and verifying the result/confirmation page
 6. Building a side-by-side before/after composite (live left, dev right) for every target
    that has both shots
-7. Writing a short report in the user's language to `.reports/<branch-name>.md`, with embedded
-   before/after screenshots
+7. Running the project's code quality tools (PHPStan, PHPCS, PHP-CS-Fixer, Psalm, Rector,
+   ESLint, Stylelint — whichever are configured) on the changed files
+8. Writing a short report in the user's language to `.reports/<branch-name>.md`, with embedded
+   before/after screenshots and the code quality results
 
 **This skill always produces `.reports/<branch-name>.md`.** No matter how Steps 1-4 go —
 missing plan file, no verification targets found, browser tool unavailable, dev/live site
@@ -32,7 +34,7 @@ this skill's execution, not an acceptable outcome.
 
 ## Flow Overview
 
-Steps 1 → 2 → 3 → 3.5 → 4 → 4.5 (close the browser) → 5 → 6
+Steps 1 → 2 → 3 → 3.5 → 4 → 4.5 (close the browser) → 4.6 (code quality) → 5 → 6
 
 ## Instructions
 
@@ -422,6 +424,110 @@ pages, tabs or browser contexts open. Close everything this run opened:
   browsers are not yours to stop. Closing pages through the MCP tool is enough, since the
   renderer processes exit with their pages.
 
+### Step 4.6: Run code quality tools
+
+Static analysis and linters catch what a screenshot can't. This step runs whatever the project
+has configured and feeds the results into the **Code Quality** section of the report (Step 5).
+Like every other step, a failure here never skips Step 5 — a tool that can't run becomes a
+⚠️ row, not an abort.
+
+#### 4.6a — Resolve tools
+
+1. Read the shared test config (same file `/tdd` uses for its runners):
+   ```bash
+   cat .claude/test-config.json 2>/dev/null
+   ```
+   If it has a `quality` object (`{ "<tool>": "<command>" }`), use those commands silently and
+   skip to 4.6b.
+
+2. Otherwise **auto-detect** by config file / binary in the repo root (run the checks in
+   parallel):
+
+   | Tool | Detect | Default command |
+   |------|--------|-----------------|
+   | PHPStan | `phpstan.neon`, `phpstan.neon.dist` or `vendor/bin/phpstan` | `make phpstan` if the Makefile has that target, else `<php> vendor/bin/phpstan analyse --no-progress` |
+   | PHP_CodeSniffer | `phpcs.xml`, `phpcs.xml.dist`, `.phpcs.xml` | `<php> vendor/bin/phpcs` |
+   | PHP-CS-Fixer | `.php-cs-fixer.php`, `.php-cs-fixer.dist.php` | `<php> vendor/bin/php-cs-fixer fix --dry-run --diff` |
+   | Psalm | `psalm.xml`, `psalm.xml.dist` | `<php> vendor/bin/psalm --no-progress` |
+   | Rector | `rector.php` | `<php> vendor/bin/rector process --dry-run --no-progress-bar` |
+   | ESLint | `eslint.config.*` or `.eslintrc*` in the root or a `themes/*/` package dir | `npx eslint .` run from that package dir |
+   | Stylelint | `.stylelintrc*` in the root or a `themes/*/` package dir | `npx stylelint "**/*.{css,scss}"` run from that package dir |
+   | PHP lint (fallback) | only when **no** PHP tool above was found and the branch changes `*.php` files | `<php> -l <file>` for each changed PHP file |
+
+   `<php>` is `ddev php` when `.ddev/config.yaml` exists, otherwise `php` (same rule as `/tdd`).
+   A `Makefile` target or a `composer.json` `scripts` entry named `phpstan`, `lint`, `cs`,
+   `analyse`, `rector` or similar **wins over the raw binary** — it carries the project's flags
+   and PHP runner. Check with `grep -E '^(phpstan|lint|cs|analyse|rector):' Makefile` and
+   `grep -A20 '"scripts"' composer.json`.
+
+3. **Confirm once** with `AskUserQuestion` — list the detected tools and commands with options
+   **"Use these"**, **"Edit"** (the user supplies corrections via "Other") and
+   **"None — skip quality checks"**. Then **merge** the result into `.claude/test-config.json`
+   under `"quality"` without touching the `phpunit` / `playwright` keys (read the file, add the
+   key, write it back):
+   ```json
+   {
+     "phpunit": "ddev php vendor/bin/phpunit tests/",
+     "playwright": "cd tests/playwright && npx playwright test --reporter=line",
+     "quality": {
+       "phpstan": "make phpstan",
+       "rector": "ddev php vendor/bin/rector process --dry-run --no-progress-bar"
+     }
+   }
+   ```
+   If the file does not exist yet, create `.claude/` and start from `{}` — do not invent
+   `phpunit` / `playwright` entries, `/tdd` writes those itself.
+
+   Confirm: `Saved quality tools to .claude/test-config.json`. "None" saves `"quality": {}` so
+   the question is not asked again.
+
+   If nothing is detected, log `No code quality tools found — skipping.` and continue to Step 5.
+
+#### 4.6b — Run
+
+1. **Changed files** on the branch:
+   ```bash
+   git diff <defaultBranch>...<branch-name> --name-only
+   ```
+   If the branch hasn't diverged yet, use `git diff HEAD --name-only` plus `git diff --cached --name-only`.
+
+2. For each configured tool, decide its kind by looking at the **command, not its last word**:
+   - **Path-aware**: the command invokes one of these binaries directly — `vendor/bin/phpstan`
+     (`analyse`), `vendor/bin/phpcs`, `vendor/bin/php-cs-fixer` (`fix`), `vendor/bin/rector`
+     (`process`), `npx eslint`, `npx stylelint`. Append only the changed files that match the
+     tool's file type **and** lie inside the tool's configured paths, then drop any that fall
+     under its skip/exclude list:
+     - `phpstan.neon*`: `paths:` minus `excludePaths:`
+     - `rector.php`: the entries of `->withPaths([...])` minus `->withSkip([...])`; `__DIR__ . '/x'`
+       means `<repo root>/x`
+     - `phpcs.xml*`: `<file>` minus `<exclude-pattern>`; ESLint/Stylelint: their `ignores` /
+       `ignoreFiles`
+     If no changed file matches, **skip the tool** and record it as
+     "skipped — no matching changed files" (not as a failure).
+   - **Wrapper**: the command starts with `make`, `composer`, `npm run`, `yarn`, or a project
+     script. Run it exactly as configured, on the whole project. A whole-project run is
+     acceptable; the timeout below bounds it.
+   - Run every command as `timeout 300 <command>` (5 minutes **per tool**). Capture exit code
+     and output. Exit code `124` means timeout. If a run fails because of the environment,
+     **do not retry in a loop** — investigate once (e.g. `ddev describe`) and otherwise record
+     the error.
+
+3. **Classify** each tool:
+   - ✅ **Pass** — exit code 0
+   - ❌ **Fail** — non-zero exit **and** the output contains parseable findings; count them
+     (PHPStan prints `[ERROR] Found N errors`; Rector exits `2` and lists the files it would
+     change — count files; phpcs/eslint/stylelint print per-file counts)
+   - ⚠️ **Needs review** — binary missing, `ddev` not running, exit `124` (timeout), or a
+     non-zero exit **without** parseable findings (config error, crash); keep the first error
+     line for the report
+   - ➖ **Skipped** — no matching changed files
+
+   When a `phpstan-baseline.neon` (or psalm baseline) exists, note in the report's **Notes** that
+   only new findings are reported; old ones are baselined.
+
+Keep the trimmed output (first ~30 lines per failed/needs-review tool, `path:line` first) for
+the report.
+
 ### Step 5: Write the report
 
 **File path:** `.reports/<branch-name>.md`
@@ -472,6 +578,12 @@ mkdir -p .reports
   | Before (live) / After (dev, annotated) | Vorher (live) / Nachher (dev, markiert) |
   | Changes marked | Markierte Änderungen |
   | Filled form (dev) / Result after submit (dev) | Ausgefülltes Formular (dev) / Ergebnis nach dem Absenden (dev) |
+  | Code Quality | Code-Qualität |
+  | Tool / Command / Result | Werkzeug / Befehl / Ergebnis |
+  | Pass / Fail / Needs review / Skipped (quality rows) | OK / Fehler / Zu prüfen / Übersprungen |
+  | findings | Funde |
+  | Skipped — no matching changed files | Übersprungen — keine passenden geänderten Dateien |
+  | _No code quality tools configured._ | _Keine Code-Qualitäts-Werkzeuge konfiguriert._ |
   | Implementation Checklist | Umsetzungs-Checkliste |
   | Notes | Hinweise |
   | _Live site not available — dev-only capture._ | _Live-Seite nicht erreichbar — nur Dev-Aufnahme._ |
@@ -550,6 +662,26 @@ environment, e.g. "✅ Pass — submitted on dev and live, confirmation page sho
 
 ---
 
+## Code Quality
+
+| Tool | Command | Result |
+|------|---------|--------|
+| PHPStan | `make phpstan` | ✅ Pass — 0 findings |
+| Rector | `ddev php vendor/bin/rector process --dry-run --no-progress-bar app/src/Foo.php` | ❌ Fail — 2 findings |
+| PHP_CodeSniffer | `ddev php vendor/bin/phpcs` | ➖ Skipped — no matching changed files |
+
+<for each ❌ / ⚠️ tool, a fenced block with the trimmed output, path:line first:>
+
+**Rector:**
+```
+app/src/Foo.php:42  … 
+```
+
+<when Step 4.6 found or configured no tools, write instead:>
+_No code quality tools configured._
+
+---
+
 ## Implementation Checklist
 
 <Copy the Steps section from the plan file verbatim, preserving - [x] / - [ ] state.
@@ -578,7 +710,12 @@ Results:
 ✅ 2 passed
 ❌ 1 failed — <brief description of failure>
 ⚠️ 1 needs review — <brief description>
+🔍 Code quality: PHPStan ✅, Rector ❌ 2 findings
 ```
+
+The `🔍` line lists every configured tool with one marker each — `✅`, `❌ N findings`, `⚠️`,
+or `➖` for skipped (e.g. `PHPStan ✅, Rector ➖`); omit the line entirely when no quality tools
+are configured.
 
 If any items **failed**, describe them clearly so the developer can act immediately. This
 summary line is required even when Step 5 wrote a degraded report (no targets, no screenshots,
@@ -637,6 +774,7 @@ If the state file does not exist, skip this step silently.
 | `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png` | Dev-site screenshot with stroke-only change markers (rectangles/lines/arrows/numbers) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-filled.png` | Form target only: form filled with marked test data, before submit (`-filled-live.png` for the live run) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-result.png` | Form target only: page shown after submitting — confirmation or error (`-result-live.png` for the live run) |
+| `.claude/test-config.json` | Shared with `/tdd`. This skill only adds/updates the `quality` key (`{ "<tool>": "<command>" }`); the `phpunit` / `playwright` keys are left untouched |
 
 ---
 
@@ -653,5 +791,8 @@ If the state file does not exist, skip this step silently.
 | A browser step fails after pages were opened | Run Step 4.5 first (close every page this run opened), then write the report. A failed run must not leave Chrome instances behind |
 | No changes on branch | Warn user; still offer to verify any URL manually; still write the report noting there was nothing to diff |
 | No verification targets identifiable at all | Still write the report — empty Verification Results section, Notes explaining nothing could be inferred |
+| No code quality tools detected (Step 4.6) | Log it, write `_No code quality tools configured._` in the report, continue |
+| Quality tool binary missing / `ddev` not running / timeout | Mark that tool ⚠️ Needs review with the first error line; do not retry in a loop; continue with the next tool and Step 5 |
+| Quality tool reports findings | Mark ❌ with the count and trimmed output; the report is still written and the screenshots results stand on their own |
 | Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |
 | Any other failure that would otherwise abort the skill | Write the report first with whatever was gathered, THEN surface the error to the user — never let an error skip Step 5 |

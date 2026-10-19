@@ -23,12 +23,13 @@ This skill automates the final step of the git workflow: merging your completed 
 0. **Resolves Default Branch**: Reads from `.claude/git-config.json`, auto-detects if missing, and saves the result
 1. **Checks Current Branch**: Confirms you're on a `fix-*` or `feature-*` branch (not the default branch)
 2. **Commits Pending Changes**: Stages and commits any modified or untracked files
-3. **Switches to Default Branch**: Checks out the default branch
-4. **Pulls Latest**: Pulls any remote changes to the default branch
-5. **Merges Branch**: Fast-forward merges the feature branch into the default branch, automatically
-6. **Pushes**: Pushes the default branch to origin
-7. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
-8. **Reports Result**: Shows what was merged, pushed, and Trello status
+3. **Rebases onto the Default Branch**: Replays the branch onto the latest `origin/<defaultBranch>` so the merge is guaranteed fast-forward, keeping history linear
+4. **Switches to Default Branch**: Checks out the default branch
+5. **Pulls Latest**: Pulls any remote changes to the default branch
+6. **Merges Branch**: Fast-forward merges the feature branch into the default branch, automatically
+7. **Pushes**: Pushes the default branch to origin
+8. **Advances Trello Card**: Moves the active Trello card to the next list (if state file exists)
+9. **Reports Result**: Shows what was merged, pushed, and Trello status
 
 ### Workflow Steps
 
@@ -86,14 +87,49 @@ If the working tree is already clean, skip this step.
 
 Save the current branch name (e.g. `fix-mobile-search-btn-center`) — you'll need it for the merge.
 
-#### Step 4: Switch to Default Branch and Pull
+#### Step 4: Rebase onto the Default Branch (keep history linear)
+
+The default branch moves forward over time as other branches merge into it — a branch created
+days or hours ago (even correctly, straight off `origin/<defaultBranch>` per `/git-new`) will
+usually be **behind** the current tip by the time it's finished. Merging it as-is would produce a
+merge commit instead of a straight line. Rebase first so the eventual merge is a guaranteed
+fast-forward:
+
+```bash
+git fetch origin
+git rebase origin/<defaultBranch>
+```
+
+Still on the feature branch when this runs — do this *before* Step 5's checkout.
+
+- **Conflicts during rebase:** **stop** and report to the user with the conflicting file list —
+  do not auto-resolve blindly. If the conflict is between hand-written source and a **generated/
+  compiled artifact** (a minified bundle, a lockfile, a `.map` file, anything produced by a build
+  step from other files also in the diff), resolve the *source* file's conflict markers first,
+  then **regenerate** the artifact from the resolved source (e.g. run the project's build command)
+  instead of hand-editing the generated file's conflict markers — then `git add` both and
+  `git rebase --continue`. If a conflict is inside two independently hand-written source changes,
+  resolve the same way a merge conflict is normally resolved, re-reading both sides' intent before
+  picking or combining them. If genuinely unsure how to reconcile a conflict, `git rebase --abort`
+  and ask the user rather than guessing.
+- **Already pushed to origin:** check first with
+  `git ls-remote --heads origin {branch-name}`. If the branch exists on the remote, the rebase
+  rewrites commits that are already public — after a successful rebase, update the remote copy with
+  `git push --force-with-lease origin {branch-name}` before continuing to Step 5. If nothing is
+  pushed (the common case for these short-lived fix/feature branches), skip the force-push — only
+  the local branch needed rewriting.
+- **Nothing to rebase:** if `git rebase origin/<defaultBranch>` reports already up to date, continue
+  immediately — this is the normal case when the default branch hasn't moved since the branch was
+  created.
+
+#### Step 5: Switch to Default Branch and Pull
 
 ```bash
 git checkout <defaultBranch>
 git pull
 ```
 
-#### Step 5: Merge the Feature Branch
+#### Step 6: Merge the Feature Branch
 
 Show the commits being merged, then merge automatically — no confirmation needed:
 
@@ -102,17 +138,18 @@ git log <defaultBranch>..{branch-name} --oneline
 git merge {branch-name}
 ```
 
-This should be a fast-forward merge and proceeds without asking the user. If it's not a
-fast-forward, or conflicts arise, **stop** and report to the user — do not attempt to resolve it
-automatically, and do not push.
+Because Step 4 already rebased the branch onto the default branch's current tip, this merge is
+now guaranteed to be a fast-forward. If it somehow still isn't (e.g. the default branch moved
+again in the brief window between Step 4 and here), **stop** and report to the user — do not
+attempt to resolve it automatically, and do not push.
 
-#### Step 6: Push to Origin
+#### Step 7: Push to Origin
 
 ```bash
 git push
 ```
 
-#### Step 7: Advance Trello Card
+#### Step 8: Advance Trello Card
 
 Check if `.claude/trello-active-card.json` exists. If it does:
 
@@ -185,7 +222,7 @@ If the file does not exist, or the Trello MCP is not available, skip this step s
 
 If the card is already on the last list (no next list), delete the state file and plan file, and note it in the report.
 
-#### Step 8: Report Success
+#### Step 9: Report Success
 
 Tell the user:
 - Which branch was merged (`{branch-name}` → `<defaultBranch>`)
@@ -207,11 +244,13 @@ Trello: moved "Newsletter Popup: Spelling Error" → "Review"
 |-----------|--------|
 | Already on default branch | Ask user which branch to merge |
 | Uncommitted changes | Stage and commit them before merging |
+| Rebase conflict in a generated/compiled file (Step 4) | Resolve the source file's conflict, then regenerate the artifact from it (run the build step) rather than hand-editing conflict markers in the generated file |
+| Rebase conflict in hand-written source (Step 4) | Resolve like a normal merge conflict, reading both sides' intent; `git rebase --abort` and ask the user if genuinely unsure |
+| Branch already pushed to origin, needs rebase (Step 4) | After a successful rebase, `git push --force-with-lease origin {branch-name}` before continuing |
 | Clean fast-forward | Merge and push automatically, no confirmation |
-| Merge conflict | Stop, report conflict, do not auto-resolve, do not push |
-| Push rejected | Stop, report rejection (e.g. non-fast-forward) |
-| Not a fast-forward | Stop, report to user, do not merge automatically |
-| Active Trello board ≠ card's board (Step 7) | Skip the Trello step only (merge/push still complete); keep the state file for a later retry; never call `set_active_board` |
+| Not a fast-forward at Step 6 despite the Step 4 rebase | Stop, report to user, do not merge automatically |
+| Push rejected | Stop, report rejection |
+| Active Trello board ≠ card's board (Step 8) | Skip the Trello step only (merge/push still complete); keep the state file for a later retry; never call `set_active_board` |
 
 ### Changing the Default Branch
 
@@ -220,7 +259,10 @@ Say "change default branch" at any time. The skill will update `.claude/git-conf
 ### Notes
 
 - Merging into the default branch is intentionally **automatic** — no confirmation prompt. Only a
-  merge conflict or non-fast-forward situation stops the flow for manual input.
+  rebase conflict or an unexpected non-fast-forward situation stops the flow for manual input.
+- The Step 4 rebase exists specifically so history on the default branch stays **linear** (a
+  straight line of fast-forward merges, no merge commits). Skipping it and merging a branch that's
+  fallen behind would silently create a merge commit instead — always rebase first.
 - This skill is the counterpart to `/git-new` — use that to start a branch, and this to finish it.
 - After a successful merge, the feature branch is **not** deleted automatically. Ask the user if they want to clean it up:
   ```bash

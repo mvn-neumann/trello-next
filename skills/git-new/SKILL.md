@@ -54,6 +54,12 @@ First, check what branch you're currently on:
 git branch --show-current
 ```
 
+**If the skill was called with a branch name** (`/git-new <branch-name>`, as `/trello-next` and
+`/plan-task` do) **and it differs from the current branch**, skip Step 2 and go straight to
+Step 3 with that name — even if the current branch already matches `fix-*`/`feature-*`. The
+argument means "a new branch for a new task"; staying on the old task's branch would mix two
+tasks and skip the fork from `origin/<defaultBranch>`.
+
 #### Step 2: Validate Branch Name
 
 The branch name MUST match one of these patterns:
@@ -73,6 +79,14 @@ git fetch origin
 # Create new branch from the default branch with --no-track
 git checkout -b {branch-name} origin/<defaultBranch> --no-track
 ```
+
+**Always fetch first, and always name `origin/<defaultBranch>` as the explicit start point.**
+`git checkout -b {branch-name}` **without** a start point silently branches from whatever is
+currently checked out — if you're already on another `fix-*`/`feature-*` branch when this runs,
+the new branch forks from that branch's tip, not from the default branch, and inherits all of its
+unmerged commits. This applies even when you're *already* on a fix/feature branch and just need a
+follow-up branch for unrelated work: always go through `origin/<defaultBranch>`, never branch
+directly off the branch you happen to be on.
 
 **Branch Naming Conventions:**
 

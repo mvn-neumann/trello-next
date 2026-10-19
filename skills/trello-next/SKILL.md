@@ -366,6 +366,12 @@ Derive the branch name now so it can be included in the plan file (Step 9).
 
 Save the branch name — it will be used in the plan file and in the final output.
 
+**This name is only derived here — the branch itself is created later, by `/git-new` (Step 11).**
+`/git-new` always fetches `origin` and branches from `origin/<defaultBranch>` explicitly, never
+from whatever is currently checked out — this matters because Step 11 may run while an unrelated
+fix/feature branch from a previous card is still checked out, and branching from that instead of
+the default branch would silently carry over its unmerged commits.
+
 **Branch collision check:** Verify the branch doesn't already exist locally or on the remote:
 ```bash
 git branch --list <branch-name> && git ls-remote --heads origin <branch-name>

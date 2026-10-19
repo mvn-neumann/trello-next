@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Write a formal spec (.specs/<branch>.md) with Given/When/Then scenarios derived from the Trello card's Acceptance Criteria and plan. Each scenario is classified as logic (PHPUnit), interactive (Playwright), or visual (/qa-report only). Use when the user says "spec", "/spec", "write spec", "write scenarios", or "specify".
+description: Write a formal spec (.specs/<branch>.md) with Given/When/Then scenarios derived from the Acceptance Criteria in the plan file (written by /trello-next or /plan-task). Each scenario is classified as logic (PHPUnit), interactive (Playwright), or visual (/qa-report only). Use when the user says "spec", "/spec", "write spec", "write scenarios", or "specify".
 model: sonnet
 ---
 
@@ -12,9 +12,10 @@ This skill turns the implementation plan and Trello Acceptance Criteria into a f
 
 ```
 /spec
+/spec <branch-name>
 ```
 
-Run **after** `/trello-next` (which writes the plan and AC to Trello) and **before** `/git-new` (the spec is a planning artifact, like `.plans/`, written before any tracked files change).
+Run **after** `/trello-next` or `/plan-task` (both write the plan with its AC) and **before** `/git-new` (the spec is a planning artifact, like `.plans/`, written before any tracked files change). `/plan-task` has no Trello state file, so it calls `/spec <branch-name>` — the argument tells this skill which plan file to read.
 
 ## Flow Overview
 
@@ -47,6 +48,13 @@ Read these **in parallel**:
    ```bash
    ls .specs/<branch-name>.md 2>/dev/null
    ```
+
+**Resolving `branchName`** — in this order, first hit wins:
+1. The skill argument (`/spec <branch-name>`). It beats the state file, which may be stale from an earlier `/trello-next` card.
+2. `branchName` from the state file.
+3. `git branch --show-current`, if it matches `fix-*` or `feature-*`.
+
+Then read `.plans/<branchName>.md` (call 2). When the branch did not come from the state file (task started via `/plan-task`), take the task title from the plan's `# Plan: <title>` heading (without the `Plan:` prefix) and the `**Source:**` line from its header; there is no `cardId` / `cardUrl`.
 
 **If no state file and no plan file exist:** Ask the user with `AskUserQuestion` what the card is about and what the branch name should be. Use those answers as the source for Step 2.
 
@@ -115,7 +123,7 @@ Then write it straight to `.specs/<branch-name>.md` (create the directory if nee
 
 If the user asks for changes after seeing the preview, incorporate the feedback and rewrite the file — it's already saved, so nothing is lost by iterating.
 
-Only push the spec to the Trello card if the user explicitly asks for that. In that case, append a short **Spec** summary block to the card description via `update_card_details`:
+Only push the spec to the Trello card if the user explicitly asks for that (not available without a card — i.e. when no state file exists). In that case, append a short **Spec** summary block to the card description via `update_card_details`:
 
 ```markdown
 ## Spec scenarios
@@ -162,6 +170,9 @@ Next steps:
 
 **File path:** `.specs/<branch-name>.md`
 
+Without a Trello card (started via `/plan-task`), replace the `**Card:**` line with the plan
+file's `**Source:**` line, e.g. `**Source:** chat` or `**Source:** docs/tasks/footer.md`.
+
 ```markdown
 # Spec: <card title>
 
@@ -202,6 +213,7 @@ Next steps:
 
 | Situation | Action |
 |-----------|--------|
+| No state file, plan file present | Branch from the skill argument or current `fix-*`/`feature-*` branch; read `.plans/<branch>.md` |
 | No state file, no plan file | Ask user for card details; derive scenarios from conversation |
 | Trello `update_card_details` fails | Save spec file anyway; log warning |
 | No Acceptance Criteria in plan | Derive scenarios from implementation steps and card title; note in spec header |
