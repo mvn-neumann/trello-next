@@ -1,63 +1,75 @@
 #!/usr/bin/env bash
-# trello-attach.sh — Upload a local file as a Trello card attachment.
+# trello-attach.sh — Upload a local file as a Trello card attachment (multipart, not via MCP).
 #
-# Usage: trello-attach.sh <card-id> <file-path> [attachment-name]
+# Usage: trello-attach.sh <card-id> <file-path> [attachment-name] [--replace]
 #
-# Reads TRELLO_API_KEY and TRELLO_TOKEN from (in order):
-#   1. Environment variables
-#   2. .env in the current working directory
-#   3. _ss_environment.php in the current working directory
+#   attachment-name  display name (default: basename of the file)
+#   --replace        after the upload, delete every other attachment of the card with the same
+#                    name, so exactly one of that name remains (used for plan files)
 #
-# On success, prints the attachment ID to stdout and exits 0.
-# On failure, prints an error message to stderr and exits 1.
+# Credentials (TRELLO_API_KEY / TRELLO_TOKEN) come from trello-env.sh: environment first, then the
+# project's .env. The project root is resolved as described below the header (TRELLO_PROJECT_ROOT, the
+# script's own location under <root>/.claude/scripts, else the cwd).
+# They travel in an Authorization header (via a curl config on stdin), never in the URL or argv.
+#
+# On success prints the new attachment id to stdout and exits 0; on failure prints an error to
+# stderr and exits 1.
 
 set -euo pipefail
 
-# ── Usage check ────────────────────────────────────────────────────────────────
-if [ $# -lt 2 ] || [ $# -gt 3 ]; then
-  echo "Usage: $(basename "$0") <card-id> <file-path> [attachment-name]" >&2
-  echo "" >&2
-  echo "  card-id         Trello card ID (from card URL or trello-active-card.json)" >&2
-  echo "  file-path       Local file to upload (jpg, png, gif, webp, pdf, …)" >&2
-  echo "  attachment-name Optional display name (default: basename of file)" >&2
-  exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Project root: $TRELLO_PROJECT_ROOT, else <root> when this script is a copy or symlink in
+# <root>/.claude/scripts, else the current directory (the globally installed ~/.claude/scripts case).
+if [ -n "${TRELLO_PROJECT_ROOT:-}" ]; then
+  PROJECT_ROOT="$TRELLO_PROJECT_ROOT"
+else
+  PROJECT_ROOT="$PWD"
+  CANDIDATE="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  if [ "$(basename "$SCRIPT_DIR")" = "scripts" ] && [ "$(basename "$(dirname "$SCRIPT_DIR")")" = ".claude" ] \
+     && [ "$CANDIDATE" != "$HOME" ]; then
+    PROJECT_ROOT="$CANDIDATE"
+  fi
 fi
+API="https://api.trello.com/1"
 
-CARD_ID="$1"
-FILE="$2"
-NAME="${3:-$(basename "$FILE")}"
+usage() {
+  echo "Usage: $(basename "$0") <card-id> <file-path> [attachment-name] [--replace]" >&2
+  exit 1
+}
+
+REPLACE=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --replace) REPLACE=1 ;;
+    *)         POSITIONAL+=("$arg") ;;
+  esac
+done
+{ [ "${#POSITIONAL[@]}" -ge 2 ] && [ "${#POSITIONAL[@]}" -le 3 ]; } || usage
+
+CARD_ID="${POSITIONAL[0]}"
+FILE="${POSITIONAL[1]}"
+NAME="${POSITIONAL[2]:-$(basename "$FILE")}"
 
 if [ ! -f "$FILE" ]; then
   echo "Error: file not found: $FILE" >&2
   exit 1
 fi
 
-# ── Credential resolution ──────────────────────────────────────────────────────
-# 1. Environment variables (already set — no action needed)
-# 2. .env in $PWD
-if [ -f ".env" ]; then
-  set -a
-  # shellcheck source=/dev/null
-  source ".env"
-  set +a
-fi
-
-# 3. _ss_environment.php in $PWD
+# shellcheck source=trello-env.sh
+. "$SCRIPT_DIR/trello-env.sh"
+trello_env_load "$PROJECT_ROOT" || exit 1
 if [ -z "${TRELLO_API_KEY:-}" ] || [ -z "${TRELLO_TOKEN:-}" ]; then
-  if [ -f "_ss_environment.php" ]; then
-    extract_define() { grep -oP "define\('$1',\s*'\K[^']+" "_ss_environment.php" 2>/dev/null || true; }
-    [ -z "${TRELLO_API_KEY:-}" ] && TRELLO_API_KEY="$(extract_define TRELLO_API_KEY)"
-    [ -z "${TRELLO_TOKEN:-}" ]   && TRELLO_TOKEN="$(extract_define TRELLO_TOKEN)"
-  fi
-fi
-
-if [ -z "${TRELLO_API_KEY:-}" ] || [ -z "${TRELLO_TOKEN:-}" ]; then
-  echo "Error: TRELLO_API_KEY and TRELLO_TOKEN must be set." >&2
-  echo "Set them in one of: environment variables, .env, or _ss_environment.php" >&2
+  echo "Error: TRELLO_API_KEY and TRELLO_TOKEN must be set (environment or $PROJECT_ROOT/.env)." >&2
   exit 1
 fi
 
-# ── MIME type detection ────────────────────────────────────────────────────────
+# tcurl <curl args…> — curl against the Trello API with the OAuth header read from stdin.
+tcurl() {
+  printf 'header = "Authorization: OAuth oauth_consumer_key=\\"%s\\", oauth_token=\\"%s\\""\n' \
+    "$TRELLO_API_KEY" "$TRELLO_TOKEN" | curl -sS --fail-with-body -K - "$@"
+}
+
 ext="${FILE##*.}"
 case "${ext,,}" in
   jpg|jpeg) MIME="image/jpeg" ;;
@@ -65,26 +77,46 @@ case "${ext,,}" in
   gif)      MIME="image/gif" ;;
   webp)     MIME="image/webp" ;;
   pdf)      MIME="application/pdf" ;;
+  md)       MIME="text/markdown" ;;
+  txt)      MIME="text/plain" ;;
+  json)     MIME="application/json" ;;
   *)        MIME="application/octet-stream" ;;
 esac
 
-# ── Upload ─────────────────────────────────────────────────────────────────────
-RESPONSE=$(curl -sf -X POST \
-  "https://api.trello.com/1/cards/${CARD_ID}/attachments?key=${TRELLO_API_KEY}&token=${TRELLO_TOKEN}" \
-  -F "name=${NAME}" \
-  -F "file=@${FILE};type=${MIME}" \
-  2>&1) || {
+RESPONSE=$(tcurl -X POST "$API/cards/$CARD_ID/attachments" \
+  -F "name=$NAME" \
+  -F "file=@${FILE};type=${MIME}" 2>&1) || {
   echo "Error: Trello API request failed." >&2
   echo "$RESPONSE" >&2
   exit 1
 }
 
-# Extract id from JSON response (no jq dependency)
-ATTACHMENT_ID=$(echo "$RESPONSE" | grep -oP '"id"\s*:\s*"\K[^"]+' | head -1)
+ATTACHMENT_ID=$(printf '%s' "$RESPONSE" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
 if [ -z "$ATTACHMENT_ID" ]; then
   echo "Error: upload succeeded but could not parse attachment ID from response." >&2
   echo "$RESPONSE" >&2
   exit 1
+fi
+
+if [ "$REPLACE" -eq 1 ]; then
+  LISTING=$(tcurl "$API/cards/$CARD_ID/attachments?fields=id,name" 2>&1) || {
+    echo "Error: uploaded $ATTACHMENT_ID, but listing the card's attachments failed." >&2
+    echo "$LISTING" >&2
+    exit 1
+  }
+  OLD_IDS=$(printf '%s' "$LISTING" | python3 -I -c '
+import json, sys
+name, keep = sys.argv[1], sys.argv[2]
+for a in json.load(sys.stdin):
+    if a.get("name") == name and a.get("id") != keep:
+        print(a["id"])
+' "$NAME" "$ATTACHMENT_ID")
+  for old in $OLD_IDS; do
+    tcurl -X DELETE "$API/cards/$CARD_ID/attachments/$old" >/dev/null 2>&1 || {
+      echo "Error: uploaded $ATTACHMENT_ID, but deleting the old attachment $old failed." >&2
+      exit 1
+    }
+  done
 fi
 
 echo "$ATTACHMENT_ID"

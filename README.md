@@ -1,6 +1,6 @@
 # trello-next
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that fetches Trello cards, analyzes them, and produces implementation plans. Includes dependent skills for git branch workflow (`/git-new`, `/git-done`) and a shared MCP launcher script.
+A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that fetches Trello cards, analyzes them, and produces implementation plans. Includes dependent skills for git branch workflow (`/git-new`, `/git-done`), `/trello-pipeline` (turns a set of plan files into Trello cards and works through them card by card with review gates) and a shared MCP launcher script.
 
 ## Prerequisites
 
@@ -59,12 +59,17 @@ Add the Trello MCP entry to your project's `.mcp.json`. The launcher script read
 
 Both `trello-mcp.sh` and `trello-env.sh` (the credential resolver it sources) need to be
 present — `trello-env.sh` is not optional, `trello-mcp.sh` fails immediately without it.
+`/trello-pipeline` and `/qa-report` also call `trello-attach.sh` and `trello-attachment-get.sh`
+(upload/download of card attachments); they source `trello-env.sh` from their own directory, so
+link or copy all four together.
 
 **Option A: Symlink the shared scripts** (recommended — stays up to date)
 ```bash
 mkdir -p .claude/scripts
 ln -sf ~/.claude/scripts/trello-mcp.sh .claude/scripts/trello-mcp.sh
 ln -sf ~/.claude/scripts/trello-env.sh .claude/scripts/trello-env.sh
+ln -sf ~/.claude/scripts/trello-attach.sh .claude/scripts/trello-attach.sh
+ln -sf ~/.claude/scripts/trello-attachment-get.sh .claude/scripts/trello-attachment-get.sh
 ```
 
 **Option B: Copy the scripts**
@@ -72,7 +77,12 @@ ln -sf ~/.claude/scripts/trello-env.sh .claude/scripts/trello-env.sh
 mkdir -p .claude/scripts
 cp ~/.claude/scripts/trello-mcp.sh .claude/scripts/trello-mcp.sh
 cp ~/.claude/scripts/trello-env.sh .claude/scripts/trello-env.sh
+cp ~/.claude/scripts/trello-attach.sh .claude/scripts/trello-attach.sh
+cp ~/.claude/scripts/trello-attachment-get.sh .claude/scripts/trello-attachment-get.sh
 ```
+
+The attachment scripts resolve the project root from `$TRELLO_PROJECT_ROOT`, else from their own
+location when they sit in `<project>/.claude/scripts`, else from the current directory.
 
 Then add to `.mcp.json`:
 ```json
@@ -178,7 +188,50 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 | `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages and generates a markdown QA report |
 | `/qa-screencast` | Optional — alongside or after `/qa-report` | Records an animated GIF of a browser interaction via CDP screencast → `.reports/screencasts/<slug>.gif` |
 | `/git-done` | When work is complete | Merges the branch, pushes, and moves the Trello card to the next list |
+| `/trello-pipeline` | Instead of `/trello-next` when a whole set of plans should become cards and be worked off | Creates cards from `.plans/NN-*.md`, implements them one by one in subagents, reviews, merges and moves them to Fertig (see below) |
 | `/log-time` | Any time after starting a card | Analyzes git commits, estimates hours worked, and posts a `/spent` comment to the Trello card |
+
+## Pipeline: `/trello-pipeline`
+
+Turns numbered plan files (`.plans/00-overview.md`, `01-*.md` … `NN-*.md`) into Trello cards and drives
+them to the done list: one subagent at a time, each card implemented by the `/trello-next` flow in
+autopilot, then reviewed, merged and moved to "Fertig". A failed review blocks the card (label
+`Blockiert`) and goes through triage; what triage cannot fix waits for your comment on the card.
+
+```
+/trello-pipeline                 # setup (if no state yet), then start the loop (/loop, self-paced)
+/trello-pipeline setup [NN-MM]   # create cards only (optional range)
+/trello-pipeline tick            # one loop step
+/trello-pipeline status          # read-only overview
+/trello-pipeline plan-push NN    # replace the card's plan attachment with the local plan file
+```
+
+**Plans are portable.** Every card carries its plan file as an attachment (`NN-<name>.md`, uploaded with
+`trello-attach.sh --replace`). The attachment is canonical, `.plans/NN-*.md` is a local copy that is
+re-downloaded before every agent run; change a plan only through `plan-push NN`. On a machine without
+`.plans/`, `setup` restores the plans and the state file (`.plans/.trello-pipeline.json`) from the board.
+
+**Agents** (strictly one at a time):
+
+| Step | Agent (`subagent_type`) | Model |
+|------|-------------------------|-------|
+| Implement (also fix and triage-fix runs) | `general-purpose` | the card's `Model:` (`opus`/`fable`, default `opus`) |
+| Code review (stage 1, read-only) | `feature-dev:code-reviewer` | session default |
+| Acceptance (stage 2, verify only, never merges) | `general-purpose` | `opus` |
+| Merge + Trello bookkeeping (stage 3, only after a pass) | `general-purpose` | `sonnet` |
+| Triage "solve" (after a failed review, read-only) | `Plan` | `opus` |
+| Triage "source" (only if data/content is missing, read-only) | `Explore` | `sonnet` |
+
+The implementer never merges. Merging happens only after review stage 2 passed, by the merge agent:
+rebase, `--ff-only`, no merge commits.
+
+**Prerequisites**
+
+- The shared skills of this repo, installed with `./install.sh` (`trello-next`, `spec`, `tdd`, `qa-report`, `git-new`, `git-done`).
+- The `feature-dev` plugin (provides `feature-dev:code-reviewer`) and Claude Code's built-in `/loop`.
+- A done list ("Fertig", "Done" or "Erledigt", or the key `done` in `.claude/trello-lists.json`) next to the lists described below.
+- Optional `.claude/dev-config.json` with `devUrl` and `liveUrl` (used by triage as sources), and a `CLAUDE.md` that names the project's checks (`make ci` or equivalent), rule files and data sources — the agents follow it.
+- `.plans/` stays gitignored (see above). Never run two pipelines on the same board.
 
 ## What Gets Installed
 
@@ -191,6 +244,8 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 │   │   └── SKILL.md              # Spec writer — Given/When/Then scenarios with type classification
 │   ├── tdd/
 │   │   └── SKILL.md              # Test-first implementation driver — write tests, implement, run green
+│   ├── trello-pipeline/
+│   │   └── SKILL.md              # Plans → cards → implement → review → merge, one agent at a time
 │   ├── git-new/
 │   │   └── SKILL.md              # Branch creation workflow
 │   ├── git-done/
@@ -204,7 +259,8 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 └── scripts/
     ├── trello-mcp.sh             # MCP launcher — pins the board into a private $HOME (see below)
     ├── trello-env.sh             # Shared credential resolver, sourced by trello-mcp.sh and skills
-    └── trello-attach.sh          # Uploads files as Trello card attachments
+    ├── trello-attach.sh          # Uploads a file as a card attachment (multipart, --replace, header auth)
+    └── trello-attachment-get.sh  # Downloads a card attachment by name (used to restore plan files)
 ```
 
 ## Spec-driven + test-driven flow
