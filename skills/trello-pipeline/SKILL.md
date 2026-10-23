@@ -21,7 +21,7 @@ Arguments are in `$ARGUMENTS`. No argument → `setup` if `.plans/.trello-pipeli
 
 ## Rules (always)
 
-- **Exactly one subagent at a time.** Never in parallel — cards build on each other.
+- **Exactly one subagent at a time.** Never in parallel — cards build on each other. A blocked card does not stop the others: independent cards go on while it waits (see `tick` case 2); before starting another card the working tree is clean and `<defaultBranch>` is checked out.
 - **Never call `set_active_board`.** Verify the board as in `/trello-next` Step 1a.
 - **Every comment the pipeline writes starts with `🤖 trello-pipeline ·`** (the "bot marker"). The bot and the user share one Trello token, so the marker is the only way to tell their comments apart. Comments are German.
 - **Never guess at a decision.** A failure or gate is decided automatically only by the decide agent (see Triage), and only for a feasible option. If none is feasible, block the card and wait for the user (see Blocking).
@@ -100,6 +100,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
       "branch": null,
       "baseCommit": null,
       "headCommit": null,
+      "reviewedCommit": null,
       "mergedCommit": null,
       "status": "todo",
       "reviewStage": null,
@@ -118,7 +119,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 `status` is one of: `todo` · `implementing` · `review` · `reviewing` · `triaging` · `blocked` · `done`.
 `reviewStage` (only while `reviewing`): `code` (code-reviewer agent) → `verify` (acceptance agent, opus) → `merge` (merge agent, sonnet).
 `triageStage` (only while `triaging`): `solve` (solvability agent) → `source` (source-finder agent, only if data/content is missing) → `decide` (decide agent, only if a failure is still `human`; always first for a gate). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction).
-`headCommit` = branch tip after the implementer; `mergedCommit` = default-branch tip after the fast-forward merge (set only after a passed review).
+`headCommit` = branch tip after the implementer; `reviewedCommit` = branch tip of the last failed review (basis of the delta review in later rounds, `null` before the first failure); `mergedCommit` = default-branch tip after the fast-forward merge (set only after a passed review).
 
 ## `status`
 
@@ -225,7 +226,7 @@ Then take the **first** case that matches:
 1a. **A card needs triage** (lowest NN first): `status: triaging` → continue at its `triageStage`; or `status: blocked` with `failedReviews ≥ 1` and `triageDone` false/missing (a failed review that was blocked before triage existed) → set `status: triaging`, `triageStage: "solve"`. Run the **Triage** section below. Do not start any other card meanwhile.
 2. **A blocked card exists** (lowest NN first; `triageDone` is true, or the block came from an implementer gate or rebase problem):
    - `get_card_comments`. Find comments **without** the bot marker that are **newer** than the comment with id `blockCommentId`.
-   - None → `ScheduleWakeup` 1800 s, `noop: true`, reason "blocked on NN — waiting for user comment". **Do not start any other card.** Tell the user once (not every tick): "Card NN is blocked — please comment your instruction on <url>."
+   - None → tell the user once (not every tick; also `PushNotification` if available): "Card NN is blocked — please comment your instruction on <url>." Then **do not stop**: continue with case 3 and case 4 for other cards (their `dependsOn` are all `done`, so none depends on the blocked card). Only if neither case has anything to start: `ScheduleWakeup` 900 s, `noop: true`, reason "blocked on NN — waiting for user comment; nothing else ready".
    - Found → remove the `Blockiert` label (`update_card_details` with the label ids minus `blockedLabelId`), take the newest non-bot comment as the **instruction**, set `autoAttempts: 0`, `status: implementing`, and start an **implement subagent in fix mode** (below).
 3. **A card is in `review`** (lowest NN) → the review has two stages, run one after the other:
    - `reviewStage` null → set `status: reviewing`, `reviewStage: "code"`, start the **code-review subagent** (stage 1).
@@ -239,7 +240,7 @@ Then take the **first** case that matches:
 Read its final report. It must contain a line `RESULT: review | passed | blocked | done | failed` plus details (`passed` only from the acceptance agent, `done` only from the merge agent). Then:
 
 - Clear `agentId`; store `branch`, `baseCommit`, `headCommit`, `mergedCommit`, `blockCommentId` if reported.
-- `review` (implement finished) → `status: review`, `reviewStage: null`. `passed` (acceptance agent) → save its evidence to `.plans/.verify-NN.md`, keep `status: reviewing`, `reviewStage: "verify"` (next tick starts the merge agent). `done` (merged by the merge agent) → `status: done`, `reviewStage: null`. `blocked` → if it came from a failed review (acceptance or merge agent with a `FAILURES:` block listing items): `failedReviews += 1`, `triageDone: false`, `triageSource: "review"`, save the `FAILURES:` block to `.plans/.triage-NN.md` (section "Failures"), `status: triaging`, `triageStage: "solve"`, `reviewStage: null`, and run **Triage** now; if it came from an implementer decision gate (implement agent, comment `Entscheidung nötig`): `triageDone: false`, `triageSource: "gate"`, save the gate comment (question, options, recommendation) to `.plans/.triage-NN.md` (section "Gate"), `status: triaging`, `triageStage: "decide"` (skip `solve`/`source`), and run **Triage** now; otherwise (rebase/merge problem, `FAILURES: none`) `status: blocked`, `reviewStage: null`, `triageDone: true`.
+- `review` (implement finished) → `status: review`, `reviewStage: null`. `passed` (acceptance agent) → save its evidence to `.plans/.verify-NN.md`, keep `status: reviewing`, `reviewStage: "verify"` (next tick starts the merge agent). `done` (merged by the merge agent) → `status: done`, `reviewStage: null`. `blocked` → if it came from a failed review (acceptance or merge agent with a `FAILURES:` block listing items): `failedReviews += 1`, `reviewedCommit` = the branch tip it checked, save its report as `.plans/.verify-NN.md` (evidence for the delta re-check), `triageDone: false`, `triageSource: "review"`, save the `FAILURES:` block to `.plans/.triage-NN.md` (section "Failures"), `status: triaging`, `triageStage: "solve"`, `reviewStage: null`, and run **Triage** now; if it came from an implementer decision gate (implement agent, comment `Entscheidung nötig`): `triageDone: false`, `triageSource: "gate"`, save the gate comment (question, options, recommendation) to `.plans/.triage-NN.md` (section "Gate"), `status: triaging`, `triageStage: "decide"` (skip `solve`/`source`), and run **Triage** now; otherwise (rebase/merge problem, `FAILURES: none`) `status: blocked`, `reviewStage: null`, `triageDone: true`.
 - The **code-review subagent** (stage 1) returns a plain report, not a `RESULT:` line: save it to `.plans/.review-NN.md` and keep `status: reviewing` (next tick starts stage 2). If it returns nothing, treat as `failed`.
 - `failed` or no parsable RESULT → comment on the card (`🤖 trello-pipeline · Agent ohne Ergebnis beendet: <reason>`), add `Blockiert` label, `status: blocked`, store that comment id. Never retry silently.
 - Run the next tick immediately (do not wait for the wakeup).
@@ -290,6 +291,18 @@ Run the /trello-next flow in AUTOPILOT mode for this card. Overrides to its step
     (gitignored files aside) and <branch> checked out, so the reviewer can start from it.
 - Record `baseCommit` (<defaultBranch> tip when you started) and `headCommit` (<branch> tip when you finish).
 
+SELF-CHECK before you hand over (the independent review runs the same checks; every finding it makes costs a
+full extra round of about 30-40 minutes):
+- Check every acceptance criterion with evidence, and run `make ci` (or the project's equivalent) once at the end.
+- Test quality: each new test that guards a rule must be shown to go red (mutation check: break the rule, test red,
+  restore, `git diff` empty). No fixed dates that will expire (use dates relative to today). Add negative asserts
+  where the plan says "must not".
+- Review your own diff with the stage-1 reviewer prompt below (`feature-dev:code-reviewer`, input `git diff
+  <defaultBranch>..<branch>`) and fix every confirmed high/medium finding.
+- Test data: before E2E/manual runs note the max ID (or a marker such as `e2e-…@beispiel.de`) of every table you
+  write to. Afterwards delete exactly your own rows in the LOCAL dev database (`SELECT COUNT` before and after,
+  limited by ID range/marker); never other rows, never outside the local dev DB. List this in your comment.
+
 When finished and all acceptance criteria are met with evidence:
 1. Move the card to "<review name>" (id <review list id>) with boardId <boardIdLong>.
 2. Add ONE comment starting with "🤖 trello-pipeline · Umsetzung fertig": summary, commit hashes, and every
@@ -298,7 +311,7 @@ When finished and all acceptance criteria are met with evidence:
 DECISION GATE / QUESTION / RED CHECK YOU CANNOT FIX: do not guess and do not work around it. Add a comment
 starting with "🤖 trello-pipeline · Entscheidung nötig" with the question, the options in a fixed format
 (`O1 …`, `O2 …`, each with steps, effect, reversible yes/no) and `Empfehlung: O<n>, weil …`, add the label id <blockedLabelId> to the card (keep the card in "<inProgress name>"),
-leave the working tree in a described, consistent state, and stop.
+commit any unfinished work as a `WIP:` commit on <branch>, leave the working tree clean and in a described, consistent state, `git checkout <defaultBranch>`, and stop.
 
 FINAL REPORT (plain text), first line exactly one of:
 RESULT: review     (implemented on the branch, card in review list, NOT merged)
@@ -320,6 +333,8 @@ git checkout <branch>
 git diff --stat <defaultBranch>..<branch>   > .plans/.review-NN.diff
 git diff <defaultBranch>..<branch>         >> .plans/.review-NN.diff
 ```
+
+**Delta review (round 2 and later, `reviewedCommit` set):** the diff file holds only `git diff <reviewedCommit>..<branch>` (the fix), and the prompt adds: "This is a re-review after a fix. The earlier findings are in the previous `.plans/.review-NN.md`; check that they are fixed and look for new problems in the fix diff only." Keep the previous report as `.plans/.review-NN.prev.md`.
 
 Spawn: `subagent_type: "feature-dev:code-reviewer"`, `description: "Code review NN <title>"`. Prompt:
 
@@ -344,7 +359,7 @@ Spawn: `subagent_type: "general-purpose"`, `model: "opus"`, `description: "Verif
 You verify Trello card "<NN – title>" (<cardUrl>, id <cardId>) in /<project dir>, branch <branch> (NOT yet merged
 into <defaultBranch>). You do NOT implement, fix or merge anything and you do not trust the implementer's report:
 verify yourself.
-Inputs: plan file <plan path> (acceptance criteria), the branch commits <defaultBranch>..<branch>, the
+Inputs: plan file <plan path> (acceptance criteria), the branch commits <defaultBranch>..<branch> (<reviewedCommit: <hash> | none>), the
 code-review report .plans/.review-NN.md, the card's comments (get_card_comments, including earlier reviews and
 user instructions).
 
@@ -357,6 +372,13 @@ Steps:
 3. Weigh the code-review report: re-check each high/medium finding yourself. A confirmed correctness, security
    or CLAUDE.md-rule finding fails the review; low-confidence findings and nits do not.
 4. If the card holds earlier user instructions, verify they were carried out.
+4a. Delta (only when <reviewedCommit> is given, i.e. this is a re-check after a fix): always re-check the failed
+   items and run `make ci`. Re-check an acceptance criterion only if `git diff <reviewedCommit>..<branch> --stat`
+   touches files its evidence depends on; for the others reuse the evidence of the earlier verify report
+   `.plans/.verify-NN.md`, and say so in your report.
+5. Test data: note the max ID/marker of every table you write to before E2E runs; afterwards delete exactly your
+   own rows in the local dev DB (`SELECT COUNT` before and after) and report it. Leftover rows of the implementer
+   are not a failure by themselves: delete them if the ID range/marker proves they are the pipeline's own.
 
 NOT PASSED -> change no code, do not merge. `git checkout <defaultBranch>`. Add a comment starting with
 "🤖 trello-pipeline · ❌ Prüfung nicht bestanden": each failing criterion/finding with file:line and evidence, and
@@ -379,6 +401,8 @@ Then: evidence per criterion and the findings.
 ```
 
 ### Stage 3 — merge subagent (mechanical, sonnet)
+
+**Inline merge (no agent):** if `git merge-base --is-ancestor <defaultBranch> <branch>` is true (the rebase would be a no-op), the orchestrator does steps 0, c, d and e itself (verify the tip, ff-merge, bookkeeping) without spawning an agent; steps a and b are skipped. Otherwise the merge agent runs as described here.
 
 Runs only after stage 2 reported `RESULT: passed`. Spawn: `subagent_type: "general-purpose"`, `model: "sonnet"`, `description: "Merge NN <title>"`. Fresh agent. It does not re-verify: it merges what stage 2 accepted and does the Trello bookkeeping. Prompt:
 
@@ -423,6 +447,10 @@ Strictly **one agent at a time**, all triage agents are **read-only** (they cann
 
 **Input.** `.plans/.triage-NN.md` section "Failures" (the `FAILURES:` block of the acceptance or merge agent). If that section is missing (legacy block), build it yourself from the bot's `❌ Prüfung nicht bestanden` comment on the card (`get_card_comments`) and `.plans/.review-NN.md`, assigning a `type` to each item.
 
+### Fast path (no agents)
+
+If every failure is `type: code`, has a concrete "what would fix it" (file:line and steps) and touches nothing on the "never alone" list below, skip `solve`, `source` and `decide`: write the verdict table (`auto` for all, reason "Fast path: code failure with a concrete fix") to `.plans/.triage-NN.md` and go straight to the action under **Verdict and action**. Any doubt (a `data`/`content`/`env`/`decision` item, a fix that is vague or touches a rule file, shared base code or data deletion) → run the stages as usual. `autoAttempts` still limits it.
+
 ### Stage `solve` — solvability agent
 
 Set `triageStage: "solve"`. Spawn `subagent_type: "Plan"`, `model: "opus"`, `description: "Triage solve NN <title>"`. Prompt:
@@ -441,7 +469,7 @@ You MUST answer solvable_alone: no for: licensed or customer-supplied files (e.g
 credentials or secrets, changes to the rule files CLAUDE.md names (linter/static-analysis config, test config,
 build file, architecture tests) or anything CLAUDE.md says needs the user's approval, any change inside code the
 project must not modify (vendored or shared base code, as CLAUDE.md says), product or owner decisions,
-writes to the live site, deleting data. Do not guess: if the evidence is insufficient, answer no and say what is missing.
+writes to the live site, deleting data (exception: rows the pipeline created itself in the local dev DB, proven by ID range, marker or time window). Do not guess: if the evidence is insufficient, answer no and say what is missing.
 For each failure with solvable_alone: no also give `options:` (2-3 concrete options O1, O2, … each with steps/files,
 effect, reversible yes/no) and `recommended: O<n> — why`.
 End with one line per failure: `T1: <F-id> · solvable_alone=<yes|no> · missing_data=<yes|no>`.
@@ -488,7 +516,7 @@ For EACH item check the recommended option first, then the other options. An opt
     defines one);
  3. it is reversible in the repo (no data deletion, no write to the live site, no step that cannot be undone);
  4. it is NOT one of: credentials or secrets, licensed or customer-supplied files, rule files or anything CLAUDE.md
-    says needs the user's OK, vendored or shared base code, writes to the live site, deleting data, product or
+    says needs the user's OK, vendored or shared base code, writes to the live site, deleting data (exception: rows the pipeline created itself in the local dev DB, proven by ID range, marker or time window), product or
     owner decisions (prices, legal texts, new customer-visible features);
  5. it needs no input only the user has. If evidence is missing, it is not feasible; do not guess.
 Answer per item: `decision: O<n> | none`, a one-line reason, and concrete fix steps as an instruction for the
@@ -514,7 +542,7 @@ Set `triageDone: true`, `triageStage: null`, then:
 
 ## Blocking (summary)
 
-A card is **blocked** when it has the `Blockiert` label. While any card is blocked or in triage, `tick` starts nothing else. After a failed review or an implementer gate the card first goes through **Triage**: solvable failures and feasibly decided options are carried out automatically (max 2 automatic attempts per card, `autoAttempts`); everything else waits. A blocked card resumes only when the user adds a comment **without** the bot marker, newer than `blockCommentId`; that comment is the instruction for the fix-mode implement subagent (and resets `autoAttempts`). A failed review always goes back to "In Arbeit" with the label. **The branch stays unmerged**; the fix run continues on the same branch, returns the card to "Zum Testen", and all review stages (code, acceptance, merge) run again with fresh agents.
+A card is **blocked** when it has the `Blockiert` label. While a card is in triage, `tick` starts nothing else; while a card is merely blocked (waiting for the user), `tick` keeps reviewing and implementing cards that do not depend on it, and the blocked card resumes first as soon as the user comments. After a failed review or an implementer gate the card first goes through **Triage**: solvable failures and feasibly decided options are carried out automatically (max 2 automatic attempts per card, `autoAttempts`); everything else waits. A blocked card resumes only when the user adds a comment **without** the bot marker, newer than `blockCommentId`; that comment is the instruction for the fix-mode implement subagent (and resets `autoAttempts`). A failed review always goes back to "In Arbeit" with the label. **The branch stays unmerged**; the fix run continues on the same branch, returns the card to "Zum Testen", and all review stages (code, acceptance, merge) run again with fresh agents.
 
 If the same card fails review **3 times** (`failedReviews` ≥ 3), stop the loop and ask the user directly with `AskUserQuestion` instead of looping further — automatic fixes included.
 

@@ -198,7 +198,8 @@ them to the done list: one subagent at a time, each card implemented by the `/tr
 autopilot, then reviewed, merged and moved to "Fertig". A failed review or an implementer
 decision gate blocks the card (label `Blockiert`) and goes through triage: what is solvable, or has a feasible
 recommended option judged by the decide agent, is carried out automatically (max 2 attempts); everything else
-waits for your comment on the card.
+waits for your comment on the card. While a card waits, independent cards keep going. Fix rounds use a fast
+path and delta reviews, and the implementer self-checks before handing over.
 
 ```
 /trello-pipeline                 # setup (if no state yet), then start the loop (/loop, self-paced)
