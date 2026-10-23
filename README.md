@@ -195,8 +195,10 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 
 Turns numbered plan files (`.plans/00-overview.md`, `01-*.md` … `NN-*.md`) into Trello cards and drives
 them to the done list: one subagent at a time, each card implemented by the `/trello-next` flow in
-autopilot, then reviewed, merged and moved to "Fertig". A failed review blocks the card (label
-`Blockiert`) and goes through triage; what triage cannot fix waits for your comment on the card.
+autopilot, then reviewed, merged and moved to "Fertig". A failed review or an implementer
+decision gate blocks the card (label `Blockiert`) and goes through triage: what is solvable, or has a feasible
+recommended option judged by the decide agent, is carried out automatically (max 2 attempts); everything else
+waits for your comment on the card.
 
 ```
 /trello-pipeline                 # setup (if no state yet), then start the loop (/loop, self-paced)
