@@ -210,7 +210,22 @@ path and delta reviews, and the implementer self-checks before handing over.
 /trello-pipeline tick            # one loop step
 /trello-pipeline status          # read-only overview
 /trello-pipeline plan-push NN    # replace the card's plan attachment with the local plan file
+/trello-pipeline watch on|off|status  # cron watcher: start the pipeline from a card comment
 ```
+
+**Start from a card comment (cron).** `/trello-pipeline watch on` adds one crontab line for the current
+project (`trello-pipeline-watch.sh run <root>`, every 5 minutes). Without Claude cost it checks the board
+(Trello wins over the state file) and starts `claude -p "/trello-pipeline"` headless when a blocked card
+has a new comment of yours, a veto comment arrives, or a card is ready while no loop runs. It never runs
+next to a running loop (lock file plus the `lastTickAt` heartbeat, 20 minutes), stops when only blocked
+cards remain, and removes its own crontab line when every card is in "Fertig". `watch off` removes it by
+hand. Each project has its own line, lock and log (`.plans/.trello-pipeline-watch.log`), so several
+projects can be watched side by side; they share your Claude usage limit. Note: turning it on while a card
+is ready starts the pipeline within 5 minutes; on WSL, cron only runs while the WSL VM is up.
+
+**Failed-review limit.** After `maxFailedReviews` failed reviews of one card (state file, default 3) the
+loop stops and asks; headless it blocks the card with a comment instead. Set it per project in
+`.plans/.trello-pipeline.json`.
 
 **Plans are portable.** Every card carries its plan file as an attachment (`NN-<name>.md`, uploaded with
 `trello-attach.sh --replace`). The attachment is canonical, `.plans/NN-*.md` is a local copy that is
@@ -267,7 +282,8 @@ rebase, `--ff-only`, no merge commits.
     ├── trello-mcp.sh             # MCP launcher — pins the board into a private $HOME (see below)
     ├── trello-env.sh             # Shared credential resolver, sourced by trello-mcp.sh and skills
     ├── trello-attach.sh          # Uploads a file as a card attachment (multipart, --replace, header auth)
-    └── trello-attachment-get.sh  # Downloads a card attachment by name (used to restore plan files)
+    ├── trello-attachment-get.sh  # Downloads a card attachment by name (used to restore plan files)
+    └── trello-pipeline-watch.sh  # Cron watcher: starts /trello-pipeline headless from a card comment
 ```
 
 ## Spec-driven + test-driven flow

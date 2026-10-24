@@ -1,6 +1,6 @@
 ---
 name: trello-pipeline
-description: Create Trello cards from numbered plan files (.plans/NN-*.md), then work through them one by one — each card implemented by /trello-next in its own subagent, then reviewed; passed cards move to Fertig, failed cards and implementer gates are first judged by a decide agent: a feasible recommended option is taken and fixed automatically (the decide agent always runs, product decisions included; the user can veto by comment until the merge); only when no feasible option exists the card blocks until the user comments an instruction. Use when the user says "trello pipeline", "/trello-pipeline", "cards from plans", "run all plans", or "work through the plans".
+description: Create Trello cards from numbered plan files (.plans/NN-*.md), then work through them one by one — each card implemented by /trello-next in its own subagent, then reviewed; passed cards move to Fertig, failed cards and implementer gates are first judged by a decide agent: a feasible recommended option is taken and fixed automatically (the decide agent always runs, product decisions included; the user can veto by comment until the merge); only when no feasible option exists the card blocks until the user comments an instruction. With `watch on` a cron watcher starts it headless from a card comment. Use when the user says "trello pipeline", "/trello-pipeline", "cards from plans", "run all plans", "work through the plans", or "trello pipeline watch".
 ---
 
 # Trello Pipeline
@@ -15,9 +15,10 @@ Turns `.plans/00-*.md … NN-*.md` into Trello cards and drives them to "Fertig"
 /trello-pipeline tick            # one loop step (what /loop calls)
 /trello-pipeline status          # read-only overview
 /trello-pipeline plan-push NN    # replace the card's plan attachment with the local .plans/NN-*.md
+/trello-pipeline watch on|off|status  # start from a card comment via cron (see "Start from a comment (cron)")
 ```
 
-Arguments are in `$ARGUMENTS`. No argument → `setup` if `.plans/.trello-pipeline.json` is missing, then Step "Start the loop". `setup` on a machine without `.plans/` restores plans and state from the board (see "Restore").
+Arguments are in `$ARGUMENTS`. No argument → `setup` if `.plans/.trello-pipeline.json` is missing, then Step "Start the loop" (with its heartbeat check). `setup` on a machine without `.plans/` restores plans and state from the board (see "Restore").
 
 ## Rules (always)
 
@@ -89,6 +90,8 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
   "defaultBranch": "master",
   "gitMode": "local",
   "indexCardId": "…",
+  "maxFailedReviews": 3,
+  "lastTickAt": "2026-10-24T20:15:00Z",
   "cards": {
     "01": {
       "title": "Commit data layer",
@@ -120,6 +123,8 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 `status` is one of: `todo` · `implementing` · `review` · `reviewing` · `triaging` · `blocked` · `done`.
 `reviewStage` (only while `reviewing`): `code` (code-reviewer agent) → `verify` (acceptance agent, opus) → `merge` (merge agent, sonnet).
 `triageStage` (only while `triaging`): `solve` (solvability agent) → `source` (source-finder agent, only if data/content is missing) → `decide` (decide agent, only if a failure is still `human`; always first for a gate). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction). `autoDecideCommentId`: id of the bot comment `Triage: automatisch entschieden und behoben`; the user may veto the decision with a comment newer than it until the card is merged (see `tick` case 3; reset to `null` when the card reaches Fertig or the veto was taken).
+`maxFailedReviews`: failed reviews per card before the loop stops and asks (see "Blocking"); missing = 3. Set it per project by hand.
+`lastTickAt`: UTC time of the last `tick` start (the heartbeat). A value younger than 20 min means a loop of this project is running; missing = no loop.
 `headCommit` = branch tip after the implementer; `reviewedCommit` = branch tip of the last failed review (basis of the delta review in later rounds, `null` before the first failure); `mergedCommit` = default-branch tip after the fast-forward merge (set only after a passed review).
 
 ## `status`
@@ -203,11 +208,15 @@ For a machine without `.plans/` (or without the state file). Never invents a pla
 
 ## Start the loop
 
+**Heartbeat check first.** If `lastTickAt` in the state file is younger than 20 min, another session of this project runs the loop: do not start; tell the user (start anyway only if the user confirms that no other session runs). Otherwise clear every `agentId` in the state file: it belongs to a session that is gone, and the resync of the first tick treats its card as interrupted (`implementing`/`reviewing` with no agent → resync as in the table, `inProgress` → `todo`, resumed by a new implement subagent).
+
 Invoke the Skill tool: `skill: "loop"`, `args: "/trello-pipeline tick"` (no interval → dynamic, self-paced). Tell the user the loop is running and how to stop it (`ScheduleWakeup stop`, or ask you).
+
+**Whenever the loop ends** (every `ScheduleWakeup { stop: true }`, also when the user asks to stop), set `lastTickAt` to `null` first, so the watcher and other sessions see at once that no loop runs.
 
 ## `tick` — one loop step
 
-Run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
+First write `lastTickAt` (current UTC time, ISO 8601) to the state file — in every tick, case 1 included; it is the heartbeat the watcher and other sessions check. Then run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
 
 For every card in the state file call `get_card` (parallel) and update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent):
 
@@ -227,14 +236,14 @@ Then take the **first** case that matches:
 1a. **A card needs triage** (lowest NN first): `status: triaging` → continue at its `triageStage`; or `status: blocked` with `failedReviews ≥ 1` and `triageDone` false/missing (a failed review that was blocked before triage existed) → set `status: triaging`, `triageStage: "solve"`; or `status: blocked` with `triageDone` true, `triageSource` `review`/`gate` and at least one open (`human`) item in `.plans/.triage-NN.md` without a `T3:` line (the orchestrator skipped the decide agent) → set `status: triaging`, `triageStage: "decide"`. Run the **Triage** section below. Do not start any other card meanwhile.
 2. **A blocked card exists** (lowest NN first; `triageDone` is true, or the block came from an implementer gate or rebase problem):
    - `get_card_comments`. Find comments **without** the bot marker that are **newer** than the comment with id `blockCommentId`.
-   - None → tell the user once (not every tick; also `PushNotification` if available): "Card NN is blocked — please comment your instruction on <url>." Then **do not stop**: continue with case 3 and case 4 for other cards (their `dependsOn` are all `done`, so none depends on the blocked card). Only if neither case has anything to start: `ScheduleWakeup` 300 s, `noop: true`, reason "blocked on NN — waiting for user comment; nothing else ready".
+   - None → tell the user once (not every tick; also `PushNotification` if available): "Card NN is blocked — please comment your instruction on <url>." Then **do not stop**: continue with case 3 and case 4 for other cards (their `dependsOn` are all `done`, so none depends on the blocked card). Only if neither case has anything to start: `ScheduleWakeup` 300 s, `noop: true`, reason "blocked on NN — waiting for user comment; nothing else ready". **Headless** (see "Headless mode"): end the loop instead (`ScheduleWakeup { stop: true }`); the watcher starts a new run when the comment comes.
    - Found → remove the `Blockiert` label (`update_card_details` with the label ids minus `blockedLabelId`), take the newest non-bot comment as the **instruction**, set `autoAttempts: 0`, `status: implementing`, and start an **implement subagent in fix mode** (below).
 3. **A card is in `review`** (lowest NN) → first the **veto check**: if `autoDecideCommentId` is set, `get_card_comments`; a comment **without** the bot marker newer than that comment is a veto. Then do not start the acceptance or merge agent: set `autoDecideCommentId: null`, `autoAttempts: 0`, `failedReviews` unchanged, `status: implementing` and start an **implement subagent in fix mode** with that comment as the instruction (as in case 2; the card goes back through all review stages afterwards). No veto → continue. The review has two stages, run one after the other:
    - `reviewStage` null → set `status: reviewing`, `reviewStage: "code"`, start the **code-review subagent** (stage 1).
    - `reviewStage: "code"` and its report is saved → set `reviewStage: "verify"`, start the **acceptance subagent** (stage 2, verify only).
    - `reviewStage: "verify"` and its report is saved to `.plans/.verify-NN.md` (it reported `RESULT: passed`) → set `reviewStage: "merge"`, start the **merge subagent** (stage 3).
-4. **Next card**: the lowest NN with `status: todo` whose `dependsOn` are all `done` → set `status: implementing`, start the **implement subagent** (normal mode). If `todo` cards exist but none has its dependencies met, that means a dependency is stuck: stop and report.
-5. **Everything except the index card is `done`** → move the index card to `done`, add a bot comment "Alle Aufgaben erledigt", tick any remaining checklist items, and end the loop with `ScheduleWakeup { stop: true }`. Summarize to the user.
+4. **Next card**: the lowest NN with `status: todo` whose `dependsOn` are all `done` → set `status: implementing`, start the **implement subagent** (normal mode). If `todo` cards exist but none has its dependencies met, that means a dependency is stuck: stop and report (headless: end the loop with `ScheduleWakeup { stop: true }`; the watcher log shows the state).
+5. **Everything except the index card is `done`** → move the index card to `done`, add a bot comment "Alle Aufgaben erledigt", tick any remaining checklist items, run `bash ~/.claude/scripts/trello-pipeline-watch.sh off "$PWD"` (removes this project's watcher; nothing happens if it is off), and end the loop with `ScheduleWakeup { stop: true }`. Summarize to the user.
 
 ### When a subagent finishes
 
@@ -546,20 +555,50 @@ Set `triageDone: true`, `triageStage: null`, then:
 - **All failures/items `auto` or `auto-decided` and `autoAttempts < 2`** → remove the `Blockiert` label (`update_card_details`), `autoAttempts += 1`, post one bot comment `🤖 trello-pipeline · Triage: automatisch entschieden und behoben` (German: the failures, the chosen fix, per decided item the option and its one-line reason, `⚠ kundensichtbar` when `visible=yes`, the sources used, attempt number; for a gate: `Entscheidung automatisch getroffen`; always the sentence `Veto bis zum Merge: Kommentar auf dieser Karte.`), store its id as `autoDecideCommentId`, send `PushNotification` (if available) when any decided item is `visible=yes`, set `status: implementing`, and start the **implement subagent in fix mode, triage variant** (see its prompt) with the decided options as instruction. After it reports `RESULT: review`, the review stages run again as usual.
 - **Otherwise** (any `human`, or `autoAttempts ≥ 2`) → the card stays blocked. Post `🤖 trello-pipeline · Triage: Entscheidung nötig` (German) with, per failure: verdict, why no option is feasible, the options and a recommendation, so one comment from the user is enough; items that were `auto`/`auto-decided` are named as such, so only the open ones need an answer; store its comment id as `blockCommentId`; `status: blocked`. Tell the user once. The loop waits as in "Blocking".
 
-`failedReviews` counts every failed review (including those that were fixed automatically); at 3 the loop stops and asks (below).
+`failedReviews` counts every failed review (including those that were fixed automatically); at `maxFailedReviews` (missing = 3) the loop stops and asks (below).
 
 ## Blocking (summary)
 
 A card is **blocked** when it has the `Blockiert` label. While a card is in triage, `tick` starts nothing else; while a card is merely blocked (waiting for the user), `tick` keeps reviewing and implementing cards that do not depend on it, and the blocked card resumes first as soon as the user comments. After a failed review or an implementer gate the card first goes through **Triage**: solvable failures and feasibly decided options are carried out automatically (max 2 automatic attempts per card, `autoAttempts`); everything else waits. A blocked card resumes only when the user adds a comment **without** the bot marker, newer than `blockCommentId`; that comment is the instruction for the fix-mode implement subagent (and resets `autoAttempts`). An automatic decision can be vetoed the same way until the merge (a comment newer than `autoDecideCommentId`, checked in `tick` case 3 before the acceptance and merge agents). A failed review always goes back to "In Arbeit" with the label. **The branch stays unmerged**; the fix run continues on the same branch, returns the card to "Zum Testen", and all review stages (code, acceptance, merge) run again with fresh agents.
 
-If the same card fails review **3 times** (`failedReviews` ≥ 3), stop the loop and ask the user directly with `AskUserQuestion` instead of looping further — automatic fixes included.
+If the same card fails review **`maxFailedReviews` times** (`failedReviews` ≥ `maxFailedReviews`, missing = 3), stop the loop and ask the user directly with `AskUserQuestion` instead of looping further — automatic fixes included. **Headless:** no `AskUserQuestion`; post `🤖 trello-pipeline · <n>× nicht bestanden — bitte Anweisung kommentieren`, keep the `Blockiert` label, store the comment id as `blockCommentId`, `status: blocked`, `triageDone: true`, and go on with other cards. The next user comment resumes the card as in `tick` case 2.
+
+## Headless mode
+
+A run is headless when `printenv TRELLO_PIPELINE_HEADLESS` prints `1` (only the watcher sets it). Nobody reads the terminal, so:
+
+- Never call `AskUserQuestion`. Where the skill would ask (role not resolvable, `maxFailedReviews` reached, a stuck dependency), block the affected card with a bot comment that states the question, or end the loop if no card fits, and let the log tell the rest.
+- `tick` case 2 with nothing else to start and a stuck dependency end the loop instead of waiting; the watcher starts the next run.
+- Everything else (one subagent at a time, triage, review stages, bot marker) is unchanged.
+
+## Start from a comment (cron)
+
+`~/.claude/scripts/trello-pipeline-watch.sh` (installed by `install.sh`) starts the pipeline without an open session. Per project, nothing is shared between projects:
+
+```
+/trello-pipeline watch on       # bash ~/.claude/scripts/trello-pipeline-watch.sh on "$PWD"
+/trello-pipeline watch off      # … off "$PWD"
+/trello-pipeline watch status   # … status "$PWD"
+```
+
+`watch on` adds one crontab line for this project (every 5 min, tagged `# trello-pipeline-watch <project root>`); `off` removes exactly that line. Every 5 min the script (no Claude cost unless it starts):
+
+1. exits if `.plans/.trello-pipeline.lock` is held (a headless run is still going) or `lastTickAt` is younger than 20 min (a session runs the loop);
+2. reads all cards of the board in one call — **Trello wins** over the state file (the `Blockiert` label and the list come from Trello; differences are logged);
+3. starts `claude -p "/trello-pipeline"` headless (clean environment, no `ANTHROPIC_API_KEY`, `--permission-mode bypassPermissions`, 12 h timeout) when a blocked card has a comment without the bot marker newer than its block comment (or the label, if set by hand), a card has a veto comment newer than `autoDecideCommentId`, or a card is ready (review list, or todo/In Arbeit without the label and all `dependsOn` in Fertig);
+4. turns itself off when every card, the index card included, is in Fertig.
+
+Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); the last run's JSON output: `.plans/.trello-pipeline-watch-run.json`. Mind: turning the watcher on with a ready card starts the pipeline within 5 minutes. On WSL, cron runs only while the WSL VM is up.
+
+`watch on|off|status`: run the script with the mode and the project root, show its output. No board check needed.
 
 ## Error handling
 
 | Situation | Action |
 |-----------|--------|
 | Active Trello board ≠ project board | Abort as in `/trello-next` Step 1a; never `set_active_board` |
-| `done` list not resolvable | Ask with `AskUserQuestion`, offer to add `done` to `.claude/trello-lists.json` |
+| `done` list not resolvable | Ask with `AskUserQuestion`, offer to add `done` to `.claude/trello-lists.json` (headless: end the loop, no question) |
+| `lastTickAt` younger than 20 min on start | Another session runs the loop: do not start, tell the user |
 | Plan lacks Acceptance Criteria | Still create the card; the implement subagent generates them (4c, no gate) |
 | Card creation fails midway | State file already holds the created cards; fix the cause and re-run `setup` (idempotent) |
 | `get_my_cards` / list reads lag after `move_card` | Trust the state file and the `get_card` of that single card, not list listings |

@@ -10,6 +10,7 @@
 #   ~/.claude/skills/trello-pipeline/SKILL.md (shared, all projects)
 #   ~/.claude/scripts/trello-mcp.sh         (shared MCP launcher)
 #   ~/.claude/scripts/trello-attach.sh, trello-attachment-get.sh (plan/screenshot upload and download)
+#   ~/.claude/scripts/trello-pipeline-watch.sh (cron watcher: starts /trello-pipeline from a card comment)
 #
 # Per-project setup (manual):
 #   .mcp.json  — add the trello MCP server entry
@@ -52,6 +53,8 @@ cp "$SCRIPT_DIR/scripts/trello-attach.sh" "$CLAUDE_DIR/scripts/trello-attach.sh"
 chmod +x "$CLAUDE_DIR/scripts/trello-attach.sh"
 cp "$SCRIPT_DIR/scripts/trello-attachment-get.sh" "$CLAUDE_DIR/scripts/trello-attachment-get.sh"
 chmod +x "$CLAUDE_DIR/scripts/trello-attachment-get.sh"
+cp "$SCRIPT_DIR/scripts/trello-pipeline-watch.sh" "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
+chmod +x "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
 
 echo "trello-next installed successfully."
 echo ""
@@ -69,6 +72,7 @@ echo "  ~/.claude/scripts/trello-mcp.sh"
 echo "  ~/.claude/scripts/trello-env.sh"
 echo "  ~/.claude/scripts/trello-attach.sh"
 echo "  ~/.claude/scripts/trello-attachment-get.sh"
+echo "  ~/.claude/scripts/trello-pipeline-watch.sh"
 echo ""
 echo "Per-project setup:"
 echo "  1. Add Trello credentials to your project's .env or _ss_environment.php:"
