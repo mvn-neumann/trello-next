@@ -197,8 +197,11 @@ Turns numbered plan files (`.plans/00-overview.md`, `01-*.md` … `NN-*.md`) int
 them to the done list: one subagent at a time, each card implemented by the `/trello-next` flow in
 autopilot, then reviewed, merged and moved to "Fertig". A failed review or an implementer
 decision gate blocks the card (label `Blockiert`) and goes through triage: what is solvable, or has a feasible
-recommended option judged by the decide agent, is carried out automatically (max 2 attempts); everything else
-waits for your comment on the card. While a card waits, independent cards keep going. Fix rounds use a fast
+recommended option judged by the decide agent, is carried out automatically (max 2 attempts). The decide agent
+always runs (the orchestrator never skips it) and may also decide product items such as deliberate differences
+or customer-visible texts; credentials, licensed files, rule files, shared base code, live writes and data
+deletion always wait for your comment. An automatic decision can be vetoed by a comment on the card until the
+merge. While a card waits, independent cards keep going. Fix rounds use a fast
 path and delta reviews, and the implementer self-checks before handing over.
 
 ```
@@ -224,6 +227,7 @@ re-downloaded before every agent run; change a plan only through `plan-push NN`.
 | Merge + Trello bookkeeping (stage 3, only after a pass) | `general-purpose` | `sonnet` |
 | Triage "solve" (after a failed review, read-only) | `Plan` | `opus` |
 | Triage "source" (only if data/content is missing, read-only) | `Explore` | `sonnet` |
+| Triage "decide" (every open item and every gate, read-only) | `Plan` | `opus` |
 
 The implementer never merges. Merging happens only after review stage 2 passed, by the merge agent:
 rebase, `--ff-only`, no merge commits.

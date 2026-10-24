@@ -1,6 +1,6 @@
 ---
 name: trello-pipeline
-description: Create Trello cards from numbered plan files (.plans/NN-*.md), then work through them one by one — each card implemented by /trello-next in its own subagent, then reviewed; passed cards move to Fertig, failed cards and implementer gates are first judged by a decide agent: a feasible recommended option is taken and fixed automatically; only when no feasible option exists the card blocks until the user comments an instruction. Use when the user says "trello pipeline", "/trello-pipeline", "cards from plans", "run all plans", or "work through the plans".
+description: Create Trello cards from numbered plan files (.plans/NN-*.md), then work through them one by one — each card implemented by /trello-next in its own subagent, then reviewed; passed cards move to Fertig, failed cards and implementer gates are first judged by a decide agent: a feasible recommended option is taken and fixed automatically (the decide agent always runs, product decisions included; the user can veto by comment until the merge); only when no feasible option exists the card blocks until the user comments an instruction. Use when the user says "trello pipeline", "/trello-pipeline", "cards from plans", "run all plans", or "work through the plans".
 ---
 
 # Trello Pipeline
@@ -110,7 +110,8 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
       "triageDone": false,
       "triageStage": null,
       "triageSource": null,
-      "autoAttempts": 0
+      "autoAttempts": 0,
+      "autoDecideCommentId": null
     }
   }
 }
@@ -118,7 +119,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 
 `status` is one of: `todo` · `implementing` · `review` · `reviewing` · `triaging` · `blocked` · `done`.
 `reviewStage` (only while `reviewing`): `code` (code-reviewer agent) → `verify` (acceptance agent, opus) → `merge` (merge agent, sonnet).
-`triageStage` (only while `triaging`): `solve` (solvability agent) → `source` (source-finder agent, only if data/content is missing) → `decide` (decide agent, only if a failure is still `human`; always first for a gate). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction).
+`triageStage` (only while `triaging`): `solve` (solvability agent) → `source` (source-finder agent, only if data/content is missing) → `decide` (decide agent, only if a failure is still `human`; always first for a gate). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction). `autoDecideCommentId`: id of the bot comment `Triage: automatisch entschieden und behoben`; the user may veto the decision with a comment newer than it until the card is merged (see `tick` case 3; reset to `null` when the card reaches Fertig or the veto was taken).
 `headCommit` = branch tip after the implementer; `reviewedCommit` = branch tip of the last failed review (basis of the delta review in later rounds, `null` before the first failure); `mergedCommit` = default-branch tip after the fast-forward merge (set only after a passed review).
 
 ## `status`
@@ -223,12 +224,12 @@ Before starting any agent for a card, run its **plan sync** (see "Plan file = ca
 Then take the **first** case that matches:
 
 1. **An agent is running** (`agentId` set on any card, no completion notification yet) → do nothing. `ScheduleWakeup` 1800 s, `noop: true`, reason "subagent running; its completion notification wakes the loop sooner". (The completion notification re-invokes you — handle it with "When a subagent finishes".)
-1a. **A card needs triage** (lowest NN first): `status: triaging` → continue at its `triageStage`; or `status: blocked` with `failedReviews ≥ 1` and `triageDone` false/missing (a failed review that was blocked before triage existed) → set `status: triaging`, `triageStage: "solve"`. Run the **Triage** section below. Do not start any other card meanwhile.
+1a. **A card needs triage** (lowest NN first): `status: triaging` → continue at its `triageStage`; or `status: blocked` with `failedReviews ≥ 1` and `triageDone` false/missing (a failed review that was blocked before triage existed) → set `status: triaging`, `triageStage: "solve"`; or `status: blocked` with `triageDone` true, `triageSource` `review`/`gate` and at least one open (`human`) item in `.plans/.triage-NN.md` without a `T3:` line (the orchestrator skipped the decide agent) → set `status: triaging`, `triageStage: "decide"`. Run the **Triage** section below. Do not start any other card meanwhile.
 2. **A blocked card exists** (lowest NN first; `triageDone` is true, or the block came from an implementer gate or rebase problem):
    - `get_card_comments`. Find comments **without** the bot marker that are **newer** than the comment with id `blockCommentId`.
    - None → tell the user once (not every tick; also `PushNotification` if available): "Card NN is blocked — please comment your instruction on <url>." Then **do not stop**: continue with case 3 and case 4 for other cards (their `dependsOn` are all `done`, so none depends on the blocked card). Only if neither case has anything to start: `ScheduleWakeup` 900 s, `noop: true`, reason "blocked on NN — waiting for user comment; nothing else ready".
    - Found → remove the `Blockiert` label (`update_card_details` with the label ids minus `blockedLabelId`), take the newest non-bot comment as the **instruction**, set `autoAttempts: 0`, `status: implementing`, and start an **implement subagent in fix mode** (below).
-3. **A card is in `review`** (lowest NN) → the review has two stages, run one after the other:
+3. **A card is in `review`** (lowest NN) → first the **veto check**: if `autoDecideCommentId` is set, `get_card_comments`; a comment **without** the bot marker newer than that comment is a veto. Then do not start the acceptance or merge agent: set `autoDecideCommentId: null`, `autoAttempts: 0`, `failedReviews` unchanged, `status: implementing` and start an **implement subagent in fix mode** with that comment as the instruction (as in case 2; the card goes back through all review stages afterwards). No veto → continue. The review has two stages, run one after the other:
    - `reviewStage` null → set `status: reviewing`, `reviewStage: "code"`, start the **code-review subagent** (stage 1).
    - `reviewStage: "code"` and its report is saved → set `reviewStage: "verify"`, start the **acceptance subagent** (stage 2, verify only).
    - `reviewStage: "verify"` and its report is saved to `.plans/.verify-NN.md` (it reported `RESULT: passed`) → set `reviewStage: "merge"`, start the **merge subagent** (stage 3).
@@ -443,13 +444,15 @@ RESULT: failed    (could not complete; say why)
 
 Runs when the acceptance agent (or the merge agent, on red `make ci` after the rebase) failed a card (card is in "In Arbeit" with the `Blockiert` label, branch unmerged) — directly after its report, or from `tick` case 1a for a card that was blocked before triage existed. Goal: decide whether the failure or gate can be fixed or decided **without the user**, and if so do it automatically. Also runs for an implementer decision gate (`triageSource: gate`, starts at stage `decide`). Never for a rebase/merge problem or an agent that returned no result — those wait for the user.
 
+**Never skip the stages.** The orchestrator never sets an item to `human` itself, and never writes a verdict like "no agents, product decision, human". Only the decide agent's result (`decided=none`, confidence low, or no usable result) makes an item `human`. Every item that is not `auto` after `solve`/`source` (including `type: decision` items and items the solve agent had to answer `solvable_alone: no` for) goes to `decide`.
+
 Strictly **one agent at a time**, all triage agents are **read-only** (they cannot Edit/Write; the orchestrator writes their reports to `.plans/.triage-NN.md`). Triage agents never touch the card or the repo; a gate is decided only by the decide agent, under the feasibility rules below.
 
 **Input.** `.plans/.triage-NN.md` section "Failures" (the `FAILURES:` block of the acceptance or merge agent). If that section is missing (legacy block), build it yourself from the bot's `❌ Prüfung nicht bestanden` comment on the card (`get_card_comments`) and `.plans/.review-NN.md`, assigning a `type` to each item.
 
 ### Fast path (no agents)
 
-If every failure is `type: code`, has a concrete "what would fix it" (file:line and steps) and touches nothing on the "never alone" list below, skip `solve`, `source` and `decide`: write the verdict table (`auto` for all, reason "Fast path: code failure with a concrete fix") to `.plans/.triage-NN.md` and go straight to the action under **Verdict and action**. Any doubt (a `data`/`content`/`env`/`decision` item, a fix that is vague or touches a rule file, shared base code or data deletion) → run the stages as usual. `autoAttempts` still limits it.
+If every failure is `type: code`, has a concrete "what would fix it" (file:line and steps) and touches none of the hard limits (decide rule 4: credentials, licensed or customer files, rule files, shared base code, live writes, data deletion), skip `solve`, `source` and `decide`: write the verdict table (`auto` for all, reason "Fast path: code failure with a concrete fix") to `.plans/.triage-NN.md` and go straight to the action under **Verdict and action**. The fast path only ever leads to `auto`. Any doubt (a `data`/`content`/`env`/`decision` item, a fix that is vague or touches a rule file, shared base code or data deletion) → run the stages as usual, never jump to `human`. `autoAttempts` still limits it.
 
 ### Stage `solve` — solvability agent
 
@@ -475,7 +478,7 @@ effect, reversible yes/no) and `recommended: O<n> — why`.
 End with one line per failure: `T1: <F-id> · solvable_alone=<yes|no> · missing_data=<yes|no>`.
 ```
 
-Save the report to `.plans/.triage-NN.md` (section "Solve"). If any failure has `missing_data: yes` or `type: data|content` → set `triageStage: "source"` and continue; otherwise go to `decide` if any failure is not solvable alone, else to the **Verdict**.
+Save the report to `.plans/.triage-NN.md` (section "Solve"). If any failure has `missing_data: yes` or `type: data|content` → set `triageStage: "source"` and continue; otherwise go to `decide` if any failure is not solvable alone or has `type: decision` (with the options the solve agent gave), else to the **Verdict**.
 
 ### Stage `source` — source-finder agent
 
@@ -516,12 +519,15 @@ For EACH item check the recommended option first, then the other options. An opt
     defines one);
  3. it is reversible in the repo (no data deletion, no write to the live site, no step that cannot be undone);
  4. it is NOT one of: credentials or secrets, licensed or customer-supplied files, rule files or anything CLAUDE.md
-    says needs the user's OK, vendored or shared base code, writes to the live site, deleting data (exception: rows the pipeline created itself in the local dev DB, proven by ID range, marker or time window), product or
-    owner decisions (prices, legal texts, new customer-visible features);
+    says needs the user's OK, vendored or shared base code, writes to the live site, deleting data (exception: rows the pipeline created itself in the local dev DB, proven by ID range, marker or time window).
+    Product decisions (customer-visible texts, prices, legal texts, design, features, deliberate differences from an
+    acceptance criterion) are NOT on this list: decide them too if the recommended option meets 1–3 and 5; the user
+    can veto afterwards;
  5. it needs no input only the user has. If evidence is missing, it is not feasible; do not guess.
-Answer per item: `decision: O<n> | none`, a one-line reason, and concrete fix steps as an instruction for the
+Answer per item: `decision: O<n> | none`, a one-line reason, `visible: yes | no` (does the decision change anything
+a customer sees: texts, prices, legal texts, design, features), and concrete fix steps as an instruction for the
 implementer (no code dumps). End with one line per item:
-`T3: <F-id|GATE> · decided=<O<n>|none> · confidence=<h|m|l>`.
+`T3: <F-id|GATE> · decided=<O<n>|none> · confidence=<h|m|l> · visible=<yes|no>`.
 ```
 
 Save the report to `.plans/.triage-NN.md` (section "Decision"). If the agent returns nothing or nothing parsable: all open items stay `human`.
@@ -533,16 +539,18 @@ Per failure (write the verdict table into `.plans/.triage-NN.md`):
 - **`auto-decided`** = not `auto`, but the decide agent has `decided=O<n>` with confidence ≥ medium.
 - **`human`** otherwise (`decided=none`, confidence low, or no decide result).
 
+Before the verdict: every `human` item needs a `T3:` line in `.plans/.triage-NN.md` (section "Decision"). If one is missing, run the `decide` stage first.
+
 Set `triageDone: true`, `triageStage: null`, then:
 
-- **All failures/items `auto` or `auto-decided` and `autoAttempts < 2`** → remove the `Blockiert` label (`update_card_details`), `autoAttempts += 1`, post one bot comment `🤖 trello-pipeline · Triage: automatisch entschieden und behoben` (German: the failures, the chosen fix, per decided item the option and its one-line reason so the user can veto by comment, the sources used, attempt number; for a gate: `Entscheidung automatisch getroffen`), set `status: implementing`, and start the **implement subagent in fix mode, triage variant** (see its prompt) with the decided options as instruction. After it reports `RESULT: review`, the review stages run again as usual.
+- **All failures/items `auto` or `auto-decided` and `autoAttempts < 2`** → remove the `Blockiert` label (`update_card_details`), `autoAttempts += 1`, post one bot comment `🤖 trello-pipeline · Triage: automatisch entschieden und behoben` (German: the failures, the chosen fix, per decided item the option and its one-line reason, `⚠ kundensichtbar` when `visible=yes`, the sources used, attempt number; for a gate: `Entscheidung automatisch getroffen`; always the sentence `Veto bis zum Merge: Kommentar auf dieser Karte.`), store its id as `autoDecideCommentId`, send `PushNotification` (if available) when any decided item is `visible=yes`, set `status: implementing`, and start the **implement subagent in fix mode, triage variant** (see its prompt) with the decided options as instruction. After it reports `RESULT: review`, the review stages run again as usual.
 - **Otherwise** (any `human`, or `autoAttempts ≥ 2`) → the card stays blocked. Post `🤖 trello-pipeline · Triage: Entscheidung nötig` (German) with, per failure: verdict, why no option is feasible, the options and a recommendation, so one comment from the user is enough; items that were `auto`/`auto-decided` are named as such, so only the open ones need an answer; store its comment id as `blockCommentId`; `status: blocked`. Tell the user once. The loop waits as in "Blocking".
 
 `failedReviews` counts every failed review (including those that were fixed automatically); at 3 the loop stops and asks (below).
 
 ## Blocking (summary)
 
-A card is **blocked** when it has the `Blockiert` label. While a card is in triage, `tick` starts nothing else; while a card is merely blocked (waiting for the user), `tick` keeps reviewing and implementing cards that do not depend on it, and the blocked card resumes first as soon as the user comments. After a failed review or an implementer gate the card first goes through **Triage**: solvable failures and feasibly decided options are carried out automatically (max 2 automatic attempts per card, `autoAttempts`); everything else waits. A blocked card resumes only when the user adds a comment **without** the bot marker, newer than `blockCommentId`; that comment is the instruction for the fix-mode implement subagent (and resets `autoAttempts`). A failed review always goes back to "In Arbeit" with the label. **The branch stays unmerged**; the fix run continues on the same branch, returns the card to "Zum Testen", and all review stages (code, acceptance, merge) run again with fresh agents.
+A card is **blocked** when it has the `Blockiert` label. While a card is in triage, `tick` starts nothing else; while a card is merely blocked (waiting for the user), `tick` keeps reviewing and implementing cards that do not depend on it, and the blocked card resumes first as soon as the user comments. After a failed review or an implementer gate the card first goes through **Triage**: solvable failures and feasibly decided options are carried out automatically (max 2 automatic attempts per card, `autoAttempts`); everything else waits. A blocked card resumes only when the user adds a comment **without** the bot marker, newer than `blockCommentId`; that comment is the instruction for the fix-mode implement subagent (and resets `autoAttempts`). An automatic decision can be vetoed the same way until the merge (a comment newer than `autoDecideCommentId`, checked in `tick` case 3 before the acceptance and merge agents). A failed review always goes back to "In Arbeit" with the label. **The branch stays unmerged**; the fix run continues on the same branch, returns the card to "Zum Testen", and all review stages (code, acceptance, merge) run again with fresh agents.
 
 If the same card fails review **3 times** (`failedReviews` ≥ 3), stop the loop and ask the user directly with `AskUserQuestion` instead of looping further — automatic fixes included.
 
@@ -557,6 +565,8 @@ If the same card fails review **3 times** (`failedReviews` ≥ 3), stop the loop
 | `get_my_cards` / list reads lag after `move_card` | Trust the state file and the `get_card` of that single card, not list listings |
 | Subagent hits a decision gate | Triage stage `decide`: a feasible option is taken automatically (max 2 with `autoAttempts`), else card blocked + comment and the pipeline waits for the user |
 | Review failed | Triage (solvability agent, source-finder if data/content is missing, decide agent for what is still open); solvable or feasibly decided → automatic fix on the same branch (max 2), else wait for the user |
+| Orchestrator is tempted to skip `solve`/`decide` ("product decision, human") | Not allowed: run the stages; only the decide agent may set `human` |
+| User vetoes an automatic decision (comment newer than `autoDecideCommentId`, before merge) | No acceptance/merge; fix mode with the comment as instruction |
 | Triage or decide agent returns nothing / unusable | Verdict `human` for all open items; post the "Entscheidung nötig" comment with what is known |
 | Subagent returns no `RESULT:` | Treat as `failed` (see "When a subagent finishes") |
 | Dependency never becomes `done` | Stop and report which card is stuck |
