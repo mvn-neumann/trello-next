@@ -3,7 +3,8 @@
 #
 # Usage: trello-pipeline-watch.sh <on|off|status|run> <project-root>
 #
-#   on      add this project's crontab line (every 5 min `run`); running it twice adds nothing
+#   on      add this project's crontab line (every 5 min `run`; running it twice adds nothing),
+#           check at once and start the run right away if a card needs it
 #   off     remove exactly this project's crontab line (tagged "# trello-pipeline-watch <root>")
 #   status  on/off, lastTickAt of the state file, last log lines
 #   run     the cron step: cheap checks, and only if a card needs the pipeline start
@@ -69,17 +70,57 @@ is_on() {
     'length($0) >= length(m) && substr($0, length($0) - length(m) + 1) == m { found = 1 } END { exit !found }'
 }
 
-watch_on() {
-  if is_on; then
-    echo "Watcher already on for $ROOT"
-    return 0
-  fi
+add_line() {
+  is_on && return 0
   # Read the whole crontab before writing it back, never in one pipe with the install.
   local rest
   rest="$(crontab_without_mine)"
   { [ -n "$rest" ] && printf '%s\n' "$rest"; echo "$CRON_LINE"; } | "$CRONTAB" -
   log "Watcher an"
-  echo "Watcher on for $ROOT"
+}
+
+# watch_on — add the crontab line, check at once with the same rules as `run`, and if a card
+# needs the pipeline start `run` detached right away instead of waiting for the next cron slot.
+watch_on() {
+  local dry=""
+  [ "$DRY" = 1 ] && dry="dry: "
+  if [ ! -f "$STATE" ]; then
+    [ "$DRY" = 1 ] || add_line
+    echo "${dry}Watcher on for $ROOT — nothing to start (no state file yet)"
+    return 0
+  fi
+  if ! flock -n "$PLANS/.trello-pipeline.lock" true; then
+    [ "$DRY" = 1 ] || add_line
+    echo "${dry}Watcher on for $ROOT — a headless run is already going (lock held)"
+    return 0
+  fi
+  local out decision
+  if ! out="$(decide 2>&1)"; then
+    echo "Error: check failed: $out" >&2
+    exit 1
+  fi
+  decision="${out%%$'\n'*}"
+  case "$decision" in
+    off*)
+      echo "${dry}All cards are Fertig — watcher stays off for $ROOT"
+      [ "$DRY" = 1 ] || watch_off "${decision#off }" >/dev/null
+      ;;
+    start*)
+      if [ "$DRY" = 1 ]; then
+        echo "dry: Watcher on for $ROOT — would start now: ${decision#start }"
+        return 0
+      fi
+      add_line
+      # Detached, so `watch on` returns at once and the run outlives the calling session. `run`
+      # takes the lock and checks again, so a cron start in the same second cannot double it.
+      setsid nohup "$SCRIPT_PATH" run "$ROOT" </dev/null >/dev/null 2>&1 &
+      echo "Watcher on for $ROOT — starts now: ${decision#start } (log: $LOG)"
+      ;;
+    *)
+      [ "$DRY" = 1 ] || add_line
+      echo "${dry}Watcher on for $ROOT — nothing to start now (${decision#skip })"
+      ;;
+  esac
 }
 
 watch_off() {
@@ -257,7 +298,7 @@ except Exception: print("?")' "$PLANS/.trello-pipeline-watch-run.json")"
 }
 
 case "$MODE" in
-  on)     [ "$DRY" = 1 ] && { echo "dry: would add: $CRON_LINE"; exit 0; }; watch_on ;;
+  on)     watch_on ;;
   off)    [ "$DRY" = 1 ] && { echo "dry: would remove the line with: $MARKER"; exit 0; }; watch_off ;;
   status) watch_status ;;
   run)    watch_run ;;

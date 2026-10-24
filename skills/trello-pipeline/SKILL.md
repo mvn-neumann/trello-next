@@ -581,14 +581,14 @@ A run is headless when `printenv TRELLO_PIPELINE_HEADLESS` prints `1` (only the 
 /trello-pipeline watch status   # … status "$PWD"
 ```
 
-`watch on` adds one crontab line for this project (every 5 min, tagged `# trello-pipeline-watch <project root>`); `off` removes exactly that line. Every 5 min the script (no Claude cost unless it starts):
+`watch on` adds one crontab line for this project (every 5 min, tagged `# trello-pipeline-watch <project root>`), checks at once with the same rules and, if a card needs the pipeline, starts the headless run right away (detached, so it outlives this session); `off` removes exactly that line. Every 5 min the script (no Claude cost unless it starts):
 
 1. exits if `.plans/.trello-pipeline.lock` is held (a headless run is still going) or `lastTickAt` is younger than 20 min (a session runs the loop);
 2. reads all cards of the board in one call — **Trello wins** over the state file (the `Blockiert` label and the list come from Trello; differences are logged);
 3. starts `claude -p "/trello-pipeline"` headless (clean environment, no `ANTHROPIC_API_KEY`, `--permission-mode bypassPermissions`, 12 h timeout) when a blocked card has a comment without the bot marker newer than its block comment (or the label, if set by hand), a card has a veto comment newer than `autoDecideCommentId`, or a card is ready (review list, or todo/In Arbeit without the label and all `dependsOn` in Fertig);
 4. turns itself off when every card, the index card included, is in Fertig.
 
-Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); the last run's JSON output: `.plans/.trello-pipeline-watch-run.json`. Mind: turning the watcher on with a ready card starts the pipeline within 5 minutes. On WSL, cron runs only while the WSL VM is up.
+Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); the last run's JSON output: `.plans/.trello-pipeline-watch-run.json`. Mind: turning the watcher on with a ready card starts the pipeline immediately. On WSL, cron runs only while the WSL VM is up.
 
 `watch on|off|status`: run the script with the mode and the project root, show its output. No board check needed.
 

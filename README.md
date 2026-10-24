@@ -214,14 +214,15 @@ path and delta reviews, and the implementer self-checks before handing over.
 ```
 
 **Start from a card comment (cron).** `/trello-pipeline watch on` adds one crontab line for the current
-project (`trello-pipeline-watch.sh run <root>`, every 5 minutes). Without Claude cost it checks the board
+project (`trello-pipeline-watch.sh run <root>`, every 5 minutes) and checks at once: if a card is ready, the
+headless run starts right away. Without Claude cost it checks the board
 (Trello wins over the state file) and starts `claude -p "/trello-pipeline"` headless when a blocked card
 has a new comment of yours, a veto comment arrives, or a card is ready while no loop runs. It never runs
 next to a running loop (lock file plus the `lastTickAt` heartbeat, 20 minutes), stops when only blocked
 cards remain, and removes its own crontab line when every card is in "Fertig". `watch off` removes it by
 hand. Each project has its own line, lock and log (`.plans/.trello-pipeline-watch.log`), so several
 projects can be watched side by side; they share your Claude usage limit. Note: turning it on while a card
-is ready starts the pipeline within 5 minutes; on WSL, cron only runs while the WSL VM is up.
+is ready starts the pipeline immediately; on WSL, cron only runs while the WSL VM is up.
 
 **Failed-review limit.** After `maxFailedReviews` failed reviews of one card (state file, default 3) the
 loop stops and asks; headless it blocks the card with a comment instead. Set it per project in
