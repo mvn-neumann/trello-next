@@ -237,13 +237,13 @@ re-downloaded before every agent run; change a plan only through `plan-push NN`.
 
 | Step | Agent (`subagent_type`) | Model |
 |------|-------------------------|-------|
-| Implement (also fix and triage-fix runs) | `general-purpose` | the card's `Model:` (`opus`/`fable`, default `opus`) |
-| Code review (stage 1, read-only) | `feature-dev:code-reviewer` | session default |
-| Acceptance (stage 2, verify only, never merges) | `general-purpose` | `opus` |
+| Implement (also fix and triage-fix runs) | `general-purpose` | the card's `Model:` (`sonnet`/`opus`/`fable`, default `sonnet`) |
+| Code review (stage 1, read-only) | `feature-dev:code-reviewer` (fallback: `Plan`) | `sonnet` |
+| Acceptance (stage 2, verify only, never merges) | `general-purpose` | `sonnet` |
 | Merge + Trello bookkeeping (stage 3, only after a pass) | `general-purpose` | `sonnet` |
-| Triage "solve" (after a failed review, read-only) | `Plan` | `opus` |
+| Triage "solve" (after a failed review, read-only) | `Plan` | `sonnet` |
 | Triage "source" (only if data/content is missing, read-only) | `Explore` | `sonnet` |
-| Triage "decide" (every open item and every gate, read-only) | `Plan` | `opus` |
+| Triage "decide" (every open item and every gate, read-only) | `Plan` | `sonnet` |
 
 The implementer never merges. Merging happens only after review stage 2 passed, by the merge agent:
 rebase, `--ff-only`, no merge commits.

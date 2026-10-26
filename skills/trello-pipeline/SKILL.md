@@ -98,7 +98,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
       "plan": ".plans/01-commit-data-layer.md",
       "cardId": "…",
       "url": "https://trello.com/c/…",
-      "model": "opus",
+      "model": "sonnet",
       "dependsOn": [],
       "branch": null,
       "baseCommit": null,
@@ -121,7 +121,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 ```
 
 `status` is one of: `todo` · `implementing` · `review` · `reviewing` · `triaging` · `blocked` · `done`.
-`reviewStage` (only while `reviewing`): `code` (code-reviewer agent) → `verify` (acceptance agent, opus) → `merge` (merge agent, sonnet).
+`reviewStage` (only while `reviewing`): `code` (code-reviewer agent) → `verify` (acceptance agent, sonnet) → `merge` (merge agent, sonnet).
 `triageStage` (only while `triaging`): `solve` (solvability agent) → `source` (source-finder agent, only if data/content is missing) → `decide` (decide agent, only if a failure is still `human`; always first for a gate). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction). `autoDecideCommentId`: id of the bot comment `Triage: automatisch entschieden und behoben`; the user may veto the decision with a comment newer than it until the card is merged (see `tick` case 3; reset to `null` when the card reaches Fertig or the veto was taken).
 `maxFailedReviews`: failed reviews per card before the loop stops and asks (see "Blocking"); missing = 3. Set it per project by hand.
 `lastTickAt`: UTC time of the last `tick` start (the heartbeat). A value younger than 20 min means a loop of this project is running; missing = no loop.
@@ -142,7 +142,7 @@ If the glob is empty: look for cards named `NN – …` on the board (`get_cards
 For each file read it and extract:
 
 - **Title**: from the first heading `# NN – Title` (strip the number prefix); fall back to the filename.
-- **Model**: from a `Model: …` field in the file's `Status:` line; else from the status table in `00-*.md`; else `opus`.
+- **Model**: from a `Model: …` field in the file's `Status:` line; else from the status table in `00-*.md`; else `sonnet`.
 - **Depends on**: same two sources; `–` means none. Store as an array of two-digit strings.
 
 ### 2. Idempotency
@@ -257,7 +257,7 @@ Read its final report. It must contain a line `RESULT: review | passed | blocked
 
 ## Implement subagent
 
-Spawn with the Agent tool: `subagent_type: "general-purpose"`, `model` = the card's model (`opus` or `fable`; default `opus`), `description: "Task NN <title>"`. Save the returned agent id in `agentId`. Prompt (fill the placeholders):
+Spawn with the Agent tool: `subagent_type: "general-purpose"`, `model` = the card's model (`sonnet`, `opus` or `fable`; default `sonnet`), `description: "Task NN <title>"`. Save the returned agent id in `agentId`. Prompt (fill the placeholders):
 
 ```
 You implement Trello card "<NN – title>" (<cardUrl>, id <cardId>) in /<project dir>.
@@ -346,7 +346,7 @@ git diff <defaultBranch>..<branch>         >> .plans/.review-NN.diff
 
 **Delta review (round 2 and later, `reviewedCommit` set):** the diff file holds only `git diff <reviewedCommit>..<branch>` (the fix), and the prompt adds: "This is a re-review after a fix. The earlier findings are in the previous `.plans/.review-NN.md`; check that they are fixed and look for new problems in the fix diff only." Keep the previous report as `.plans/.review-NN.prev.md`.
 
-Spawn: `subagent_type: "feature-dev:code-reviewer"`, `description: "Code review NN <title>"`. Prompt:
+Spawn: `subagent_type: "feature-dev:code-reviewer"`, `model: "sonnet"` (if that agent type is not available, use `subagent_type: "Plan"`, `model: "sonnet"` with the same prompt), `description: "Code review NN <title>"`. Prompt:
 
 ```
 Review the changes of Trello card "<NN – title>" in /<project dir>: the diff is in .plans/.review-NN.diff
@@ -363,7 +363,7 @@ Save its report to `.plans/.review-NN.md` (the orchestrator writes it; the agent
 
 ### Stage 2 — acceptance subagent (verify only, never merges)
 
-Spawn: `subagent_type: "general-purpose"`, `model: "opus"`, `description: "Verify NN <title>"`. Fresh agent. Prompt:
+Spawn: `subagent_type: "general-purpose"`, `model: "sonnet"`, `description: "Verify NN <title>"`. Fresh agent. Prompt:
 
 ```
 You verify Trello card "<NN – title>" (<cardUrl>, id <cardId>) in /<project dir>, branch <branch> (NOT yet merged
@@ -465,7 +465,7 @@ If every failure is `type: code`, has a concrete "what would fix it" (file:line 
 
 ### Stage `solve` — solvability agent
 
-Set `triageStage: "solve"`. Spawn `subagent_type: "Plan"`, `model: "opus"`, `description: "Triage solve NN <title>"`. Prompt:
+Set `triageStage: "solve"`. Spawn `subagent_type: "Plan"`, `model: "sonnet"`, `description: "Triage solve NN <title>"`. Prompt:
 
 ```
 Triage failed Trello card "<NN – title>" (<cardUrl>) in /<project dir>, branch <branch> (unmerged; read it with git,
@@ -515,7 +515,7 @@ Save the report to `.plans/.triage-NN.md` (section "Sources"). If the agent has 
 
 ### Stage `decide` — decide agent
 
-Runs for every failure that is still `human` after `solve`/`source`, and first for every gate (`triageSource: gate`). Set `triageStage: "decide"`. Spawn `subagent_type: "Plan"`, `model: "opus"`, `description: "Triage decide NN <title>"`. Prompt:
+Runs for every failure that is still `human` after `solve`/`source`, and first for every gate (`triageSource: gate`). Set `triageStage: "decide"`. Spawn `subagent_type: "Plan"`, `model: "sonnet"`, `description: "Triage decide NN <title>"`. Prompt:
 
 ```
 Decide for Trello card "<NN – title>" (<cardUrl>) in /<project dir>, branch <branch> (unmerged; read-only, change
