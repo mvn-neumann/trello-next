@@ -224,6 +224,15 @@ hand. Each project has its own line, lock and log (`.plans/.trello-pipeline-watc
 projects can be watched side by side; they share your Claude usage limit. Note: turning it on while a card
 is ready starts the pipeline immediately; on WSL, cron only runs while the WSL VM is up.
 
+**Several projects on one board.** Each project has a `projectKey` (state file; default: the folder name of
+the git root). Its cards get the project label (`projectKey`, black) and the name prefix
+`<projectKey> · NN – Title`, so two projects can both have an "01". `setup`, `Restore`, the loop and the
+cron watcher only read and change the cards of their own state file (`setup` and `Restore` also accept cards
+with the project label or prefix); cards of other projects are never fetched, moved, commented or labelled.
+The watcher fetches only the open cards of its own project, one small request each, and treats archived
+cards as done. Old state files are migrated on the first run: the project label is added to the open
+cards, nothing is renamed. Two projects must not use the same `projectKey`.
+
 **Status labels.** Every pipeline card shows its state as a colored label, created on the board if missing:
 `Wartet` (sky, dependencies open), `In Umsetzung` (blue), `In Prüfung` (purple, review and merge),
 `Triage` (orange), `Blockiert` (red, waits for your comment), `Gemergt` (green) and, in addition,

@@ -17,7 +17,9 @@
 #   - a card is ready: in the review list, or in todo/inProgress without the label and all
 #     dependsOn cards in the done list.
 # Trello wins over the state file; the script never writes the state file. When every card
-# (index card included) is in the done list, `run` turns the watcher off.
+# (index card included) is in the done list or archived, `run` turns the watcher off.
+# Only this project's cards are read: those of its own state file that are not done (plus the index
+# card), one small GET each. Other projects' cards on the same board are never fetched.
 #
 # Files (per project, in <root>/.plans/): .trello-pipeline.lock, .trello-pipeline-watch.log,
 # .trello-pipeline-watch.last (last decision, to keep the log short), .trello-pipeline-watch-run.json
@@ -156,7 +158,7 @@ decide() {
       trello_env_load "$ROOT" >/dev/null || exit 1
     fi
     python3 -I - "$STATE" <<'PY'
-import datetime, json, os, sys, urllib.request
+import concurrent.futures, datetime, json, os, sys, urllib.request
 
 BOT = "🤖 trello-pipeline ·"
 state = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -182,15 +184,38 @@ if tick:
         print(f"skip Pipeline läuft (lastTickAt {tick})")
         sys.exit(0)
 
-board = fake["cards"] if fake is not None else get(f"/boards/{state['boardIdLong']}/cards?fields=idList,idLabels,name")
-by_id = {c["id"]: c for c in board}
 role_of = {v: k for k, v in state["lists"].items()}
 label = state["blockedLabelId"]
 cards = state["cards"]
 
+def fetch_cards():
+    """Only this project's open cards: state-file cards that are not done, plus the index card."""
+    if fake is not None:
+        return fake["cards"]
+    ids = [c["cardId"] for c in cards.values() if c.get("status") != "done" and c.get("cardId")]
+    if state.get("indexCardId"):
+        ids.append(state["indexCardId"])
+    # One small GET per card (the batch API cannot return more than one field per card: it splits
+    # `urls` on commas, even percent-encoded ones). A few threads keep it fast and far below
+    # Trello's rate limit; a missing or failed card is simply absent and reported as such.
+    def one(cid):
+        try:
+            return get(f"/cards/{cid}?fields=idList,idLabels,name,closed")
+        except Exception:
+            return None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        return [c for c in pool.map(one, ids) if c]
+
+board = fetch_cards()
+by_id = {c["id"]: c for c in board}
+
 def role(nn):
-    c = by_id.get(cards[nn]["cardId"])
-    return role_of.get(c["idList"]) if c else None
+    s = cards[nn]
+    c = by_id.get(s["cardId"])
+    if c is None:
+        # not fetched: done cards of the state file are trusted, anything else is missing
+        return "done" if s.get("status") == "done" else None
+    return "done" if c.get("closed") else role_of.get(c["idList"])
 
 def blocked(nn):
     c = by_id.get(cards[nn]["cardId"])
@@ -209,7 +234,7 @@ for nn, s in sorted(cards.items()):
 
 index = by_id.get(state.get("indexCardId") or "")
 if all(role(nn) == "done" for nn in cards):
-    if index is None or role_of.get(index["idList"]) == "done":
+    if index is None or index.get("closed") or role_of.get(index["idList"]) == "done":
         print("off alle Karten Fertig")
     else:
         print("start alle Aufgaben Fertig, Indexkarte abschließen")

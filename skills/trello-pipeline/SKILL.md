@@ -30,6 +30,7 @@ Arguments are in `$ARGUMENTS`. No argument → `setup` if `.plans/.trello-pipeli
 - **Reports and cards stay honest:** a criterion without evidence is not met.
 - Browser automation is always **headless**.
 - Project rules (`CLAUDE.md`, hooks, "red check → change the code, not the rule") apply to every subagent unchanged.
+- **Only this project's cards.** Several projects can share one board. Never read, move, comment on or label a card that is not in this project's state file; during `setup` and `Restore` only cards marked as this project's (see "Project identity") count. The loop and the watcher never look at other cards.
 
 ## Plan file = card attachment (canonical)
 
@@ -60,9 +61,23 @@ Follow `/trello-next` Step 1a (resolve `projectBoardId` from `.claude/trello-hom
 
 If `done` or any other role cannot be resolved, show all list names and ask with `AskUserQuestion`.
 
+### Project identity
+
+Several projects can add cards to the same board. A card belongs to this project if **any** of these holds:
+
+1. its `cardId` is in this project's state file;
+2. it carries the project label (name = `projectKey`, color `black`);
+3. its name starts with `<projectKey> · `.
+
+A card with only a plain `NN – …` name is never matched unless rule 1 holds (this keeps cards from before this feature working).
+
+`projectKey` is stored in the state file. Default: the basename of the git root (`basename "$(git rev-parse --show-toplevel)"`); it can be set by hand. Card names are `<projectKey> · NN – <Title>` (index card `<projectKey> · 00 – <Title>`). Attachment names stay `NN-<name>.md` (they are per card and cannot collide). If another project already uses the same `projectKey` (its label exists and cards with it are not in this state file and not from this project), `setup` aborts and asks for a different `projectKey`.
+
+**Migration (old state file without `projectKey`):** at the start of `setup` and of the first `tick`, set `projectKey` and `projectLabelId`, and add the project label to every card of the state file that is not `done` (and to the index card). Existing cards are not renamed.
+
 ### S2 — Labels
 
-`get_board_labels` (one call); use the labels named below and create each missing one with `create_label` (name and color as in the table). Save the ids: `Blockiert` as `blockedLabelId`, the others in `labels` (state file). Cached after the first run; re-resolve only if a saved id is no longer on the board.
+`get_board_labels` (one call); use the labels named below and create each missing one with `create_label` (name and color as in the table). Save the ids: `Blockiert` as `blockedLabelId`, the project label as `projectLabelId`, the others in `labels` (state file). Cached after the first run; re-resolve only if a saved id is no longer on the board. The project label (name `projectKey`, color `black`) is not a status label: the label sync adds it to every card of this project and never removes it.
 
 | Key in `labels` | Name | Color | Shown while |
 |-----------------|------|-------|-------------|
@@ -100,6 +115,8 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 {
   "boardIdLong": "…",
   "lists": { "todo": "…", "inProgress": "…", "review": "…", "done": "…" },
+  "projectKey": "my-project",
+  "projectLabelId": "…",
   "blockedLabelId": "…",
   "labels": { "waiting": "…", "implementing": "…", "reviewing": "…", "triage": "…", "merged": "…", "autoDecided": "…" },
   "defaultBranch": "master",
@@ -156,7 +173,7 @@ Read-only. If the state file is missing: say "No pipeline state — run `/trello
 
 Glob `.plans/[0-9][0-9]-*.md`; apply the range if given (default: all). Sort ascending by NN.
 
-If the glob is empty: look for cards named `NN – …` on the board (`get_cards_by_list_id`, all four lists). Cards found and no state file → run **Restore** and stop. No plan files and no such cards → stop with "Keine Plan-Dateien gefunden (weder `.plans/` noch Board)".
+If the glob is empty: look for **this project's** cards (see "Project identity": project label or name prefix; `get_cards_by_list_id` for all four lists, filtered locally) whose name has the form `[<projectKey> · ]NN – …`. Plain `NN – …` cards of other projects are ignored. Cards found and no state file → run **Restore** and stop. No plan files and no such cards → stop with "Keine Plan-Dateien gefunden (weder `.plans/` noch Board)".
 
 For each file read it and extract:
 
@@ -166,7 +183,7 @@ For each file read it and extract:
 
 ### 2. Idempotency
 
-Load the state file if it exists. Fetch the cards of all four lists (`get_cards_by_list_id`, in parallel; archived cards are ignored). Treat a card as existing if the state file has its `cardId` **or** a card named `NN – …` exists on the board. Skip existing cards (but add them to the state file if missing). Running `setup` twice must create nothing.
+Load the state file if it exists. Fetch the cards of all four lists (`get_cards_by_list_id`, in parallel; archived cards are ignored). Treat a card as existing if the state file has its `cardId` **or** a card of **this project** (project label or `<projectKey> · ` prefix) with the same NN exists on the board. A plain `NN – …` card without the label or prefix is another project's: ignore it and create this project's card. Skip existing cards (but add them to the state file if missing). Running `setup` twice must create nothing.
 
 For every existing card, check its attachments (`get_card`): no attachment named after the plan file → upload the local file (backfill). Attachment present → never overwrite it; if the local copy differs (download to the scratchpad, `cmp`), report "lokale Änderung nicht übernommen — `plan-push NN`".
 
@@ -174,7 +191,8 @@ For every existing card, check its attachments (`get_card`): no attachment named
 
 Create them **sequentially in ascending order** with `add_card_to_list` (so `pos` keeps the order; do not use the batch tool):
 
-- **name**: `NN – <Title>`
+- **name**: `<projectKey> · NN – <Title>`
+- **labels**: the project label (`projectLabelId`), set when the card is created (`labels` parameter of `add_card_to_list`; if the tool has none, `update_card_details` right after)
 - **description**:
 
   ```markdown
@@ -196,7 +214,7 @@ Save each card in the state file immediately after creation (`status: "todo"`). 
 
 If `00-*.md` is in range, create one card in **`inProgress`**:
 
-- name: `00 – <Title>` (e.g. "00 – Overview …")
+- name: `<projectKey> · 00 – <Title>` (e.g. "my-project · 00 – Overview …"), with the project label
 - description: the plan Markdown (truncate as above); upload `00-*.md` as its attachment as well
 - `create_checklist` named `Aufgaben`, then one `add_checklist_item` per created task card: `NN – <Title> — <card URL>`
 
@@ -221,8 +239,8 @@ Replaces the canonical plan of card NN with the local file. Refused while an age
 For a machine without `.plans/` (or without the state file). Never invents a plan.
 
 1. S1–S3 (board, lists, labels, git mode).
-2. `get_cards_by_list_id` for all four lists; take cards whose name matches `^\d\d – `. For each, `get_card` and download its `NN-*.md` attachment to `.plans/`. A card without such an attachment is reported and left out; the user decides.
-3. Rebuild `.plans/.trello-pipeline.json`: `title`, `cardId`, `url` from the card; `model` and `dependsOn` as in setup step 1; `status` from the resync table; `branch` = `git branch --list "*-<first 8 chars of cardId>"` with `headCommit` its tip (else `null`); everything else `null`/`0`/`false`. `indexCardId` = the `00 – …` card; `lists`, `blockedLabelId`, `defaultBranch`, `gitMode` from S1–S3.
+2. `get_cards_by_list_id` for all four lists; take only **this project's** cards (project label or `<projectKey> · ` prefix) whose name, after the prefix, matches `^\d\d – ` (cards of other projects are never restored). For each, `get_card` and download its `NN-*.md` attachment to `.plans/`. A card without such an attachment is reported and left out; the user decides.
+3. Rebuild `.plans/.trello-pipeline.json`: `title`, `cardId`, `url` from the card; `model` and `dependsOn` as in setup step 1; `status` from the resync table; `branch` = `git branch --list "*-<first 8 chars of cardId>"` with `headCommit` its tip (else `null`); everything else `null`/`0`/`false`. `indexCardId` = this project's `00 – …` card; `projectKey`, `projectLabelId`, `lists`, `blockedLabelId`, `labels`, `defaultBranch`, `gitMode` from S1–S3.
 4. Show the overview table as in setup step 5. Do not start the loop; the user decides.
 
 ## Start the loop
@@ -237,7 +255,7 @@ Invoke the Skill tool: `skill: "loop"`, `args: "/trello-pipeline tick"` (no inte
 
 First write `lastTickAt` (current UTC time, ISO 8601) to the state file — in every tick, case 1 included; it is the heartbeat the watcher and other sessions check. Then run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
 
-For every card in the state file call `get_card` (parallel), update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent), then run the **label sync** (S2) for each card whose labels do not match yet (a card set to Fertig by hand gets `Gemergt`; a missing `labels` map in an old state file → run S2 first):
+Only the cards of the state file are looked at (never the rest of the board). Cards with `status: done` are skipped (no call; a card that turns out archived or moved out of the done list later is not this loop's business). For every other card in the state file call `get_card` (parallel); an archived (`closed`) card counts as `done`. Update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent), then run the **label sync** (S2) for each card whose labels do not match yet (a card set to Fertig by hand gets `Gemergt`; a missing `labels` map in an old state file → run S2 first):
 
 | Trello state | status |
 |--------------|--------|
@@ -576,7 +594,7 @@ A run is headless when `printenv TRELLO_PIPELINE_HEADLESS` prints `1` (only the 
 `watch on` adds one crontab line for this project (every 5 min, tagged `# trello-pipeline-watch <project root>`), checks at once with the same rules and, if a card needs the pipeline, starts the headless run right away (detached, so it outlives this session); `off` removes exactly that line. Every 5 min the script (no Claude cost unless it starts):
 
 1. exits if `.plans/.trello-pipeline.lock` is held (a headless run is still going) or `lastTickAt` is younger than 20 min (a session runs the loop);
-2. reads all cards of the board in one call — **Trello wins** over the state file (the `Blockiert` label and the list come from Trello; differences are logged);
+2. reads **only this project's cards** (the cards of its state file that are not `done`, plus the index card, one small request each; never the whole board) — **Trello wins** over the state file (the `Blockiert` label and the list come from Trello; differences are logged). An archived card counts as done;
 3. starts `claude -p "/trello-pipeline"` headless (clean environment, no `ANTHROPIC_API_KEY`, `--permission-mode bypassPermissions`, 12 h timeout) when a blocked card has a comment without the bot marker newer than its block comment (or the label, if set by hand), a card has a veto comment newer than `autoDecideCommentId`, or a card is ready (review list, or todo/In Arbeit without the label and all `dependsOn` in Fertig);
 4. turns itself off when every card, the index card included, is in Fertig.
 
@@ -599,6 +617,8 @@ Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); th
 | Orchestrator is tempted to skip triage ("product decision, human") | Not allowed: run the triage agent; only it may set `human` |
 | User vetoes an automatic decision (comment newer than `autoDecideCommentId`, before merge) | No review/merge; fix mode with the comment as instruction |
 | Old state file with `reviewStage: "code"` and no separate review due, or `triageStage` `solve`/`source`/`decide` | Treat as `reviewStage: "verify"` not yet started / `triageStage: "triage"` |
+| A card has this project's prefix or label but its id is not in the state file | `setup` adds it to the state file (idempotency); `tick`, the loop and the watcher ignore it |
+| Another project uses the same `projectKey` (label exists with cards that are not this project's) | `setup` aborts and asks for a different `projectKey` (set it in the state file by hand) |
 | A status label cannot be created or set | Warn once, continue without it; labels are display only and never block a card |
 | Inline merge: rebase conflict, branch changed, `--ff-only` fails | Merge blocked (comment, label, card to In Arbeit); waits for the user, no triage |
 | Triage agent returns nothing / unusable | Verdict `human` for all open items; post the "Entscheidung nötig" comment with what is known |
