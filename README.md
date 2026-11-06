@@ -197,8 +197,8 @@ Turns numbered plan files (`.plans/00-overview.md`, `01-*.md` … `NN-*.md`) int
 them to the done list: one subagent at a time, each card implemented by the `/trello-next` flow in
 autopilot, then reviewed, merged and moved to "Fertig". A failed review or an implementer
 decision gate blocks the card (label `Blockiert`) and goes through triage: what is solvable, or has a feasible
-recommended option judged by the decide agent, is carried out automatically (max 2 attempts). The decide agent
-always runs (the orchestrator never skips it) and may also decide product items such as deliberate differences
+recommended option judged by the triage agent, is carried out automatically (max 2 attempts). Triage always
+runs to a decision (the orchestrator never skips it) and may also decide product items such as deliberate differences
 or customer-visible texts; credentials, licensed files, rule files, shared base code, live writes and data
 deletion always wait for your comment. An automatic decision can be vetoed by a comment on the card until the
 merge. While a card waits, independent cards keep going. Fix rounds use a fast
@@ -238,15 +238,19 @@ re-downloaded before every agent run; change a plan only through `plan-push NN`.
 | Step | Agent (`subagent_type`) | Model |
 |------|-------------------------|-------|
 | Implement (also fix and triage-fix runs) | `general-purpose` | the card's `Model:` (`sonnet`/`opus`/`fable`, default `sonnet`) |
-| Code review (stage 1, read-only) | `feature-dev:code-reviewer` (fallback: `Plan`) | `sonnet` |
-| Acceptance (stage 2, verify only, never merges) | `general-purpose` | `sonnet` |
-| Merge + Trello bookkeeping (stage 3, only after a pass) | `general-purpose` | `sonnet` |
-| Triage "solve" (after a failed review, read-only) | `Plan` | `sonnet` |
-| Triage "source" (only if data/content is missing, read-only) | `Explore` | `sonnet` |
-| Triage "decide" (every open item and every gate, read-only) | `Plan` | `sonnet` |
+| Separate code review (stage 1, read-only; only for `opus`/`fable` cards or diffs > 800 lines, see `separateCodeReview`) | `feature-dev:code-reviewer` (fallback: `Plan`) | `sonnet` |
+| Review: code review + acceptance (stage 2, never merges) | `general-purpose` | `sonnet` |
+| Triage (after a failed review or a gate: solvable → sources → decide, read-only; skipped by the fast path for plain code failures) | `general-purpose` | `sonnet` |
 
-The implementer never merges. Merging happens only after review stage 2 passed, by the merge agent:
-rebase, `--ff-only`, no merge commits.
+Typical cost: **2 agents per card** (implement, review); a failed round adds the triage agent (unless fast
+path), the fix run and one review. Fix runs continue the card's implement agent via `SendMessage` when it is
+still addressable, instead of spawning a new one. The implementer starts no Explore or reviewer agents of its
+own.
+
+The implementer never merges. Merging happens only after the review passed, inline by the orchestrator (no
+agent): rebase, `make ci` again if commits were rewritten, `--ff-only`, no merge commits.
+
+`separateCodeReview` in `.plans/.trello-pipeline.json`: `auto` (default), `always` or `never`.
 
 **Prerequisites**
 
