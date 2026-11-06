@@ -60,9 +60,23 @@ Follow `/trello-next` Step 1a (resolve `projectBoardId` from `.claude/trello-hom
 
 If `done` or any other role cannot be resolved, show all list names and ask with `AskUserQuestion`.
 
-### S2 — Blocked label
+### S2 — Labels
 
-`get_board_labels`; use the label named `Blockiert`. If missing: `create_label` name `Blockiert`, color `red`. Save its id as `blockedLabelId`.
+`get_board_labels` (one call); use the labels named below and create each missing one with `create_label` (name and color as in the table). Save the ids: `Blockiert` as `blockedLabelId`, the others in `labels` (state file). Cached after the first run; re-resolve only if a saved id is no longer on the board.
+
+| Key in `labels` | Name | Color | Shown while |
+|-----------------|------|-------|-------------|
+| `waiting` | `Wartet` | `sky` | `todo` and at least one `dependsOn` card is not `done` |
+| `implementing` | `In Umsetzung` | `blue` | `implementing` (normal and fix runs) |
+| `reviewing` | `In Prüfung` | `purple` | `review` and `reviewing` (also during the inline merge) |
+| `triage` | `Triage` | `orange` | `triaging` |
+| `merged` | `Gemergt` | `green` | `done` |
+| `autoDecided` | `Auto-Entscheidung` | `yellow` | `autoDecideCommentId` is set (veto window open until the merge); in addition to the status label |
+| — (`blockedLabelId`) | `Blockiert` | `red` | `blocked`; also during triage (see below) |
+
+A `todo` card that is ready (all dependencies `done`) gets no status label: the "To Do" list says enough.
+
+**Label sync (display only).** Whenever the orchestrator sets a new `status` (or `autoDecideCommentId`) for a card, and for every card in the `tick` resync, make the card's labels match the table: remove every status label (`waiting`, `implementing`, `reviewing`, `triage`, `merged`, `autoDecided`) that does not apply, add the one that does. Keep every other label as it is, including `Blockiert` and the user's own labels. Use one `update_card_details` with the full label id list, and skip the call when the labels already match (the resync's `get_card` gives `idLabels`). The status labels are never read back: the status still comes from the list and the `Blockiert` label (resync table), and `Blockiert` keeps its own rules (agents add it, the orchestrator removes it as described). If a label cannot be created or set, warn once and go on without it; it never blocks a card.
 
 ### S3 — Git mode
 
@@ -87,6 +101,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
   "boardIdLong": "…",
   "lists": { "todo": "…", "inProgress": "…", "review": "…", "done": "…" },
   "blockedLabelId": "…",
+  "labels": { "waiting": "…", "implementing": "…", "reviewing": "…", "triage": "…", "merged": "…", "autoDecided": "…" },
   "defaultBranch": "master",
   "gitMode": "local",
   "indexCardId": "…",
@@ -175,7 +190,7 @@ Create them **sequentially in ascending order** with `add_card_to_list` (so `pos
 
 **Right after each card is created, upload its plan file** (see "Plan file = card attachment"); the full file is attached, so the truncated description loses nothing. An upload failure is a warning, not an abort: the next tick's plan sync catches up.
 
-Save each card in the state file immediately after creation (`status: "todo"`).
+Save each card in the state file immediately after creation (`status: "todo"`). After all cards are created, run the **label sync** (S2) once for them: cards with an open dependency get `Wartet`.
 
 ### 4. Index card (plan `00`)
 
@@ -205,7 +220,7 @@ Replaces the canonical plan of card NN with the local file. Refused while an age
 
 For a machine without `.plans/` (or without the state file). Never invents a plan.
 
-1. S1–S3 (board, lists, label, git mode).
+1. S1–S3 (board, lists, labels, git mode).
 2. `get_cards_by_list_id` for all four lists; take cards whose name matches `^\d\d – `. For each, `get_card` and download its `NN-*.md` attachment to `.plans/`. A card without such an attachment is reported and left out; the user decides.
 3. Rebuild `.plans/.trello-pipeline.json`: `title`, `cardId`, `url` from the card; `model` and `dependsOn` as in setup step 1; `status` from the resync table; `branch` = `git branch --list "*-<first 8 chars of cardId>"` with `headCommit` its tip (else `null`); everything else `null`/`0`/`false`. `indexCardId` = the `00 – …` card; `lists`, `blockedLabelId`, `defaultBranch`, `gitMode` from S1–S3.
 4. Show the overview table as in setup step 5. Do not start the loop; the user decides.
@@ -222,7 +237,7 @@ Invoke the Skill tool: `skill: "loop"`, `args: "/trello-pipeline tick"` (no inte
 
 First write `lastTickAt` (current UTC time, ISO 8601) to the state file — in every tick, case 1 included; it is the heartbeat the watcher and other sessions check. Then run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
 
-For every card in the state file call `get_card` (parallel) and update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent):
+For every card in the state file call `get_card` (parallel), update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent), then run the **label sync** (S2) for each card whose labels do not match yet (a card set to Fertig by hand gets `Gemergt`; a missing `labels` map in an old state file → run S2 first):
 
 | Trello state | status |
 |--------------|--------|
@@ -584,6 +599,7 @@ Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); th
 | Orchestrator is tempted to skip triage ("product decision, human") | Not allowed: run the triage agent; only it may set `human` |
 | User vetoes an automatic decision (comment newer than `autoDecideCommentId`, before merge) | No review/merge; fix mode with the comment as instruction |
 | Old state file with `reviewStage: "code"` and no separate review due, or `triageStage` `solve`/`source`/`decide` | Treat as `reviewStage: "verify"` not yet started / `triageStage: "triage"` |
+| A status label cannot be created or set | Warn once, continue without it; labels are display only and never block a card |
 | Inline merge: rebase conflict, branch changed, `--ff-only` fails | Merge blocked (comment, label, card to In Arbeit); waits for the user, no triage |
 | Triage agent returns nothing / unusable | Verdict `human` for all open items; post the "Entscheidung nötig" comment with what is known |
 | Subagent returns no `RESULT:` | Treat as `failed` (see "When a subagent finishes") |

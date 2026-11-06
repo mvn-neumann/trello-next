@@ -224,6 +224,12 @@ hand. Each project has its own line, lock and log (`.plans/.trello-pipeline-watc
 projects can be watched side by side; they share your Claude usage limit. Note: turning it on while a card
 is ready starts the pipeline immediately; on WSL, cron only runs while the WSL VM is up.
 
+**Status labels.** Every pipeline card shows its state as a colored label, created on the board if missing:
+`Wartet` (sky, dependencies open), `In Umsetzung` (blue), `In Prüfung` (purple, review and merge),
+`Triage` (orange), `Blockiert` (red, waits for your comment), `Gemergt` (green) and, in addition,
+`Auto-Entscheidung` (yellow) while you can still veto an automatic decision. The labels are display only; the
+pipeline reads its state from the lists and the `Blockiert` label, and leaves your own labels alone.
+
 **Failed-review limit.** After `maxFailedReviews` failed reviews of one card (state file, default 3) the
 loop stops and asks; headless it blocks the card with a comment instead. Set it per project in
 `.plans/.trello-pipeline.json`.
