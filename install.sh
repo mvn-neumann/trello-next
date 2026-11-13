@@ -56,6 +56,12 @@ chmod +x "$CLAUDE_DIR/scripts/trello-attachment-get.sh"
 cp "$SCRIPT_DIR/scripts/trello-pipeline-watch.sh" "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
 chmod +x "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
 
+# Browser tools for /qa-report (Playwright MCP, Chrome DevTools MCP, qa-shot.mjs).
+# Skipped when SKIP_BROWSER_TOOLS=1 (needs node/npx, the claude CLI and a ~130 MB download).
+if [ "${SKIP_BROWSER_TOOLS:-0}" != "1" ]; then
+  bash "$SCRIPT_DIR/scripts/install-browser-tools.sh" || echo "Browser tools not installed (run scripts/install-browser-tools.sh later)." >&2
+fi
+
 echo "trello-next installed successfully."
 echo ""
 echo "Installed files:"

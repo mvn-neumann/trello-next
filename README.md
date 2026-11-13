@@ -275,6 +275,25 @@ agent): rebase, `make ci` again if commits were rewritten, `--ff-only`, no merge
 - Optional `.claude/dev-config.json` with `devUrl` and `liveUrl` (used by triage as sources), and a `CLAUDE.md` that names the project's checks (`make ci` or equivalent), rule files and data sources — the agents follow it.
 - `.plans/` stays gitignored (see above). Never run two pipelines on the same board.
 
+## Browser tools for `/qa-report`
+
+`./install.sh` also runs `scripts/install-browser-tools.sh` (skip with `SKIP_BROWSER_TOOLS=1`; run
+it alone any time, it is idempotent). It sets up three ways to take screenshots with **real device
+emulation**, all headless, with a throwaway profile, on Playwright's own Chromium (no system Chrome
+needed, so it works in WSL):
+
+| Tool | Registered as | Mobile |
+|------|---------------|--------|
+| Playwright MCP | `playwright` (1280×900) and `playwright-mobile` (iPhone 15) | iPhone 15 preset: 393 px, DPR 3, touch, mobile UA |
+| Chrome DevTools MCP | `chrome-devtools` | `emulate` with `390x844x3,mobile,touch` |
+| `qa-shot.mjs` (Playwright script) | `~/.claude/tools/qa-shot/qa-shot.mjs` | `--device "iPhone 15"` |
+
+- MCP servers are registered with `claude mcp add --scope user` (Claude Code does not read
+  `mcpServers` from `~/.claude/settings.json`). **Restart Claude Code afterwards.** Check with `claude mcp list`.
+- Versions are pinned at the top of the script. Chromium is linked at `~/.claude/tools/chromium`.
+- `/qa-report` uses them in this order: Chrome DevTools MCP, Playwright MCP, `qa-shot.mjs`, and
+  Claude in Chrome only as a last resort (it cannot emulate a device).
+
 ## What Gets Installed
 
 ```

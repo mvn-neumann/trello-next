@@ -217,7 +217,18 @@ Create the screenshots directory:
 mkdir -p .reports/screenshots
 ```
 
-**Detect the available browser tool** by trying each in order. Use the first that succeeds.
+**Detect the available browser tool**, in this order. Use the first that is available:
+
+1. **Chrome DevTools MCP** (`mcp__chrome-devtools__*`) — real viewport emulation (`emulate`)
+2. **Playwright MCP** (`mcp__playwright__*` desktop, `mcp__playwright-mobile__*` for mobile —
+   the mobile server runs as an iPhone 15: touch, DPR 3, mobile user agent)
+3. **`qa-shot.mjs`** (Option A1b) — Playwright script via Bash, no MCP needed
+4. **Claude in Chrome** (Option A2) — last resort, **no device emulation**
+
+For mobile, only 1–3 give real emulation. If none of the first three is available, tell the
+user once: `bash <trello-next>/scripts/install-browser-tools.sh`, then restart Claude Code
+(MCP servers load at startup). Then continue with what is there. `claude mcp list` shows
+what is registered.
 For each verification target, capture up to three images: `-dev` (clean dev shot), `-live`
 (clean live shot, if `liveUrl` is set and reachable), and `-annotated` (dev shot with the
 change markers drawn on).
@@ -264,7 +275,7 @@ to `.reports/screenshots/`, one per viewport:
   does **not** count as taken. A frontend target without saved annotated shots is ⚠️
   **Needs review**, never ✅.
 
-In the Option A / A2 / B steps below, `-dev`, `-live` and `-annotated` mean the per-viewport
+In the Option A / A1b / A2 / B steps below, `-dev`, `-live` and `-annotated` mean the per-viewport
 names from this table for frontend targets.
 
 #### Option A: Playwright MCP
@@ -276,6 +287,12 @@ For each verification target, one after another on the single page:
    mcp__playwright__browser_resize  width: 1280  height: 900
    mcp__playwright__browser_navigate  url: <dev target url>
    ```
+   Viewports: desktop = `browser_resize` 1280×900 (Playwright) or `emulate` with
+   `viewport: 1280x900x1` (chrome-devtools). Mobile = the **`playwright-mobile`** server's
+   tools (iPhone 15 preset, no resize needed), or `emulate` with `viewport: 390x844x3,mobile,touch`
+   on chrome-devtools. `browser_resize` alone gives only a narrow desktop browser (no touch,
+   no mobile UA): not enough for a mobile shot. After the shot, check `innerWidth` with an
+   evaluate call and put it in the report if it differs from what you asked for.
    Wait briefly for the page to settle, run **Step 3.5** (prepare the page), then:
    ```
    mcp__playwright__browser_take_screenshot  filename: .reports/screenshots/<branch-name>-<n>-<slug>-dev.png
@@ -413,10 +430,39 @@ If only a non-interactive fallback is available (Puppeteer fallback without eval
 manual screenshots), the submission cannot be tested — mark the form target ⚠️ **Needs
 review** and state explicitly that the submission flow was not exercised.
 
+#### Option A1b: `qa-shot.mjs` (Playwright script, real emulation without MCP)
+
+Works whenever `~/.claude/tools/qa-shot/qa-shot.mjs` exists (installed by
+`scripts/install-browser-tools.sh`) and the Playwright / Chrome DevTools MCP tools are not
+loaded. One call per shot:
+
+```bash
+# desktop 1280x900, annotated
+node ~/.claude/tools/qa-shot/qa-shot.mjs --url <url> --viewport 1280x900 \
+  --annotate '[{"selector":".hero","label":"1","note":"…"}]' \
+  --out .reports/screenshots/<branch-name>-<n>-<slug>-annotated-desktop.png
+# mobile: iPhone 15 (393 px, DPR 3, touch, mobile UA), annotated
+node ~/.claude/tools/qa-shot/qa-shot.mjs --url <url> --device "iPhone 15" \
+  --annotate '[…]' --out .reports/screenshots/<branch-name>-<n>-<slug>-annotated-mobile.png
+```
+
+Leave out `--annotate` for the clean `-dev` / `-live` shots. Step 3.5 (overlay cleanup) runs
+inside the script. It prints one JSON line: `innerWidth`, `devicePixelRatio`, `touch`,
+`annotations.missing` (selectors not found: fix them and re-run) and `failedRequests`
+(responses ≥ 400 and aborted requests). Put failed image/video/CSS/JS requests that belong to
+the change into the report. A fresh process per shot is fine here: nothing stays open, so
+Step 4.5 has nothing to close. Image `Read` the result to check the markers.
+
 #### Option A2: Claude in Chrome (`mcp__claude-in-chrome__*`)
 
-Use this when the Playwright and chrome-devtools MCPs are not available but the Chrome
-extension tools are (load them with ToolSearch first; start with `tabs_context_mcp`). Same
+**Last resort. `resize_window` resizes the browser window, not the page viewport: `innerWidth`
+stays as it was, so media queries do not switch and desktop shots are not 1280 px. There is
+no device emulation.** For mobile, render the page in a same-origin iframe
+(`<iframe src="/" style="width:390px;height:790px">`) and annotate inside
+`iframe.contentDocument`: this applies the real mobile CSS, but has no touch, no device pixel
+ratio and no mobile UA. State "layout only, no device emulation" in the target's Result line
+and in Notes. Use this only when the Playwright and chrome-devtools MCPs and `qa-shot.mjs`
+are all unavailable but the Chrome extension tools are (load them with ToolSearch first; start with `tabs_context_mcp`). Same
 three-shot pattern per viewport, on **one** tab created for the run:
 
 1. `resize_window` to 1280×900 (desktop) or 390×844 (mobile); `navigate` to the target URL.
