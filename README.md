@@ -185,7 +185,7 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 | `/spec` | After `/trello-next`, before `/git-new` | Writes `.specs/<branch>.md` with Given/When/Then scenarios; classifies each as logic, interactive, or visual |
 | `/git-new` | Before file changes | Creates a `fix-*` or `feature-*` branch from the main branch |
 | `/tdd` | After `/git-new` | Writes tests first from the spec, implements the plan, and runs the suite green |
-| `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages and generates a markdown QA report |
+| `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages (annotated desktop and mobile shots for every frontend change) and generates a markdown QA report |
 | `/qa-screencast` | Optional — alongside or after `/qa-report` | Records an animated GIF of a browser interaction via CDP screencast → `.reports/screencasts/<slug>.gif` |
 | `/git-done` | When work is complete | Merges the branch, pushes, and moves the Trello card to the next list |
 | `/trello-pipeline` | Instead of `/trello-next` when a whole set of plans should become cards and be worked off | Creates cards from `.plans/NN-*.md`, implements them one by one in subagents, reviews, merges and moves them to Fertig (see below) |

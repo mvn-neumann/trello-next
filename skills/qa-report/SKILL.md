@@ -1,6 +1,6 @@
 ---
 name: qa-report
-description: Verify implemented changes by navigating the dev site (and the live site for comparison, if reachable), taking annotated screenshots, and writing a QA report. Use after code changes are done, before /git-done. Use when the user says "verify changes", "qa report", "/qa-report", "check changes", or "take screenshots".
+description: Verify implemented changes by navigating the dev site (and the live site for comparison, if reachable), taking annotated desktop and mobile screenshots for frontend changes, and writing a QA report. Use after code changes are done, before /git-done. Use when the user says "verify changes", "qa report", "/qa-report", "check changes", or "take screenshots".
 model: sonnet
 ---
 
@@ -10,7 +10,8 @@ This skill verifies implemented changes by:
 1. Reading what was changed from the plan file and git diff
 2. Navigating the dev site (and, when reachable, the live site for a before/after comparison)
 3. Closing overlays (debug bar, cookie consent, dialogs) before every screenshot
-4. Marking what changed with simple stroke-only annotations (rectangles, arrows, numbers)
+4. Marking what changed with simple stroke-only annotations (rectangles, arrows, numbers);
+   for every frontend change one annotated desktop and one annotated mobile screenshot, always
 5. For form targets: filling the form with marked test data, submitting it (on dev **and**
    live), and verifying the result/confirmation page
 6. Building a side-by-side before/after composite (live left, dev right) for every target
@@ -141,8 +142,16 @@ For each target, record:
 - **slug** — a short kebab-case label for the screenshot filename (e.g. `homepage-heading`, `popup-close`)
 - **annotations** — one or more `{ selector, label, note }` triples identifying the specific
   element(s) that changed (CSS selector, a short number/letter label, a one-line note of what
-  changed there), inferred from the diff/plan step. Leave empty if no single element can be
-  pinned down (e.g. a page-wide layout shift) — the screenshot is still taken, just unmarked.
+  changed there), inferred from the diff/plan step. For a frontend target the list is never
+  empty: if no single element can be pinned down, mark the region that shows the change (the
+  hero block, the section, the whole content column for a page-wide shift).
+  Leave empty only for non-frontend targets.
+- **frontend** — `true` when the change shows on a page: the diff touches templates, CSS/SCSS,
+  JS, theme files, or server code whose output ends up in the page (e.g. PHP that rewrites
+  HTML, blocks, widgets). `false` for pure backend/CLI/config work. A frontend target gets
+  annotated shots (see **Frontend targets** in Step 4).
+- **viewports** — for frontend targets `[desktop, mobile]`; `[desktop]` only when the page has
+  no mobile layout (decided by looking at it at 390 px, noted in the report in one line).
 - **form** — `true` when the target is a form or the change touches a form in any way
   (form templates, form/controller classes, submission handlers, validation JS, upload
   handling, confirmation emails/pages). A form target's **check** must cover the full
@@ -232,6 +241,32 @@ of Chrome instances behind.
 - Playwright MCP answering "Browser is already in use for ..." means another session holds the
   profile. Use the chrome-devtools MCP instead (same rules).
 
+#### Frontend targets: annotated desktop + mobile (mandatory)
+
+For every target with `frontend: true`, the report contains **annotated** screenshots, saved
+to `.reports/screenshots/`, one per viewport:
+
+| Viewport | Size | Annotated file |
+|----------|------|----------------|
+| desktop | 1280×900, scale 1 | `<branch-name>-<n>-<slug>-annotated-desktop.png` |
+| mobile | 390×844, scale 1, touch/mobile emulation where the tool offers it | `<branch-name>-<n>-<slug>-annotated-mobile.png` |
+
+- The clean shots get the same suffix: `-dev-desktop.png`, `-dev-mobile.png`,
+  `-live-desktop.png`, `-live-mobile.png`; the composites `-compare-desktop.png`,
+  `-compare-mobile.png`.
+- Always annotate, even when the change is small or has no pinned element: draw the stroke
+  rectangle and label around the region that shows the change. Never substitute the plain dev
+  shot for the annotated one on a frontend target.
+- Skip mobile only when the page really has no mobile layout; say so in one line in the report.
+- Work through desktop, then mobile on the **same page** (browser hygiene above). Reset the
+  size afterwards.
+- A screenshot that only exists in the chat and was not saved under `.reports/screenshots/`
+  does **not** count as taken. A frontend target without saved annotated shots is ⚠️
+  **Needs review**, never ✅.
+
+In the Option A / A2 / B steps below, `-dev`, `-live` and `-annotated` mean the per-viewport
+names from this table for frontend targets.
+
 #### Option A: Playwright MCP
 
 For each verification target, one after another on the single page:
@@ -300,9 +335,11 @@ For each verification target, one after another on the single page:
      document.body.appendChild(svg);
    }  args: [<this target's annotations array>]
    ```
-   Then screenshot to `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png`.
-   If `annotations` is empty for this target, skip the overlay injection and just reuse the
-   dev shot as the annotated one (copy the file rather than re-screenshotting).
+   Then screenshot to `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png`
+   (`-annotated-desktop.png` / `-annotated-mobile.png` for frontend targets).
+   If `annotations` is empty for a **non-frontend** target, skip the overlay injection and
+   reuse the dev shot as the annotated one (copy the file rather than re-screenshotting).
+   A frontend target always has annotations (see above), so it always gets the overlay.
 
    Use plain strokes only — rectangles, lines, arrows (two short angled strokes at the line's
    end), and number/letter labels. Do not draw filled shapes or semi-transparent overlays;
@@ -375,6 +412,27 @@ Run this flow on each environment (dev first, then live):
 If only a non-interactive fallback is available (Puppeteer fallback without evaluate,
 manual screenshots), the submission cannot be tested — mark the form target ⚠️ **Needs
 review** and state explicitly that the submission flow was not exercised.
+
+#### Option A2: Claude in Chrome (`mcp__claude-in-chrome__*`)
+
+Use this when the Playwright and chrome-devtools MCPs are not available but the Chrome
+extension tools are (load them with ToolSearch first; start with `tabs_context_mcp`). Same
+three-shot pattern per viewport, on **one** tab created for the run:
+
+1. `resize_window` to 1280×900 (desktop) or 390×844 (mobile); `navigate` to the target URL.
+2. Wait for the page to settle, then run **Step 3.5** through `javascript_tool`
+   (`action: javascript_exec`).
+3. Annotated shot: inject the SVG overlay from Option A step 3 through `javascript_tool`
+   (pass the annotations inline), then
+   `computer` with `action: screenshot`, `save_to_disk: true`.
+4. The tool returns the saved path: copy that file to
+   `.reports/screenshots/<branch-name>-<n>-<slug>-annotated-<viewport>.png` (`cp`), then
+   `Read` it to check the markers sit on the right elements. Repeat without the overlay for
+   the clean `-dev` shot, and on the live URL for `-live`.
+5. Image/video checks that a screenshot cannot prove (poster, `<video>` readiness) go through
+   `javascript_tool` (`naturalWidth`, `readyState`, `error`) and into the report as one line.
+
+Close the tab in Step 4.5 with `tabs_close_mcp`.
 
 #### Option B: Puppeteer MCP
 
@@ -641,6 +699,16 @@ _Live site not available — dev-only capture._
 **After (dev, annotated):**
 ![<check description> — dev annotated](./screenshots/<branch-name>-<n>-<slug>-annotated.png)
 
+<for frontend targets use one block per viewport instead of the single block above, and the
+same per-viewport pairs for before/live and compare:>
+
+**After (dev, annotated, desktop):**
+![<check description> — desktop](./screenshots/<branch-name>-<n>-<slug>-annotated-desktop.png)
+
+**After (dev, annotated, mobile):**
+![<check description> — mobile](./screenshots/<branch-name>-<n>-<slug>-annotated-mobile.png)
+<or one line "No mobile layout." when the mobile shot was skipped for that reason>
+
 **Changes marked:**
 <numbered list matching each annotation label to its note, e.g.:>
 1. Hero heading now centred on mobile
@@ -696,7 +764,7 @@ Leave blank if none.>
 **Determining Pass / Fail** — examine each screenshot after reading it:
 - ✅ **Pass** — the intended change is visible and looks correct
 - ❌ **Fail** — the change is missing, broken, or visually wrong; describe the specific problem
-- ⚠️ **Needs review** — change appears to be there but cannot be fully confirmed from a static screenshot (e.g. requires interaction)
+- ⚠️ **Needs review** — change appears to be there but cannot be fully confirmed from a static screenshot (e.g. requires interaction); also every frontend target whose annotated desktop (and mobile, where applicable) shots are not saved under `.reports/screenshots/`
 
 After writing the file, output a summary to the user, in the report's language (see **Report
 language and wording** above — e.g. `📄 QA-Bericht:` for German, `📄 QA report:` for English).
@@ -771,7 +839,8 @@ If the state file does not exist, skip this step silently.
 | `.reports/screenshots/<branch-name>-<n>-<slug>-dev.png` | Clean dev-site screenshot, overlays closed |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-live.png` | Clean live-site screenshot, overlays closed (only when `liveUrl` is set and reachable for this target) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-compare.png` | Side-by-side before/after composite: live (before) left, dev (after) right, cropped to the changed region when annotations pin one (only when both a live and a dev shot exist) |
-| `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png` | Dev-site screenshot with stroke-only change markers (rectangles/lines/arrows/numbers) |
+| `.reports/screenshots/<branch-name>-<n>-<slug>-annotated.png` | Dev-site screenshot with stroke-only change markers (rectangles/lines/arrows/numbers); non-frontend targets |
+| `.reports/screenshots/<branch-name>-<n>-<slug>-annotated-desktop.png` / `-annotated-mobile.png` | Frontend targets: annotated dev shot at 1280×900 and 390×844 (mobile only if the page has a mobile layout); `-dev-`, `-live-` and `-compare-` files get the same `-desktop` / `-mobile` suffix |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-filled.png` | Form target only: form filled with marked test data, before submit (`-filled-live.png` for the live run) |
 | `.reports/screenshots/<branch-name>-<n>-<slug>-result.png` | Form target only: page shown after submitting — confirmation or error (`-result-live.png` for the live run) |
 | `.claude/test-config.json` | Shared with `/tdd`. This skill only adds/updates the `quality` key (`{ "<tool>": "<command>" }`); the `phpunit` / `playwright` keys are left untouched |
