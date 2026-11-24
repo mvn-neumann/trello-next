@@ -316,7 +316,8 @@ FIRST read CLAUDE.md of the project and .plans/00-*.md (if present). Follow CLAU
 including its pre-commit checks (e.g. /simplify, /security-review, make ci). A red check means changing the
 code, never the rule. In local mode (no remote) the /security-review skill cannot run (it needs origin/HEAD):
 do the review by hand with the checklist CLAUDE.md names (e.g. the vibesec skill) over `git diff HEAD` and say so
-in the card comment. Keep Trello comments under ~1500 characters (longer ones fail with error 414).
+in the card comment. /qa-report (step 11) already runs /security-review and /vibesec over the branch diff and writes a
+Security section into its report: reuse that instead of reviewing twice. The CLAUDE.md rule itself stays. Keep Trello comments under ~1500 characters (longer ones fail with error 414).
 
 Run the /trello-next flow in AUTOPILOT mode for this card. Overrides to its steps:
 - Step 1: as written (verify board, lists, user). Never call set_active_board.

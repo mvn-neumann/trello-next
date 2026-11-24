@@ -185,7 +185,7 @@ If you run `/trello-next` again and a plan file already exists for the selected 
 | `/spec` | After `/trello-next`, before `/git-new` | Writes `.specs/<branch>.md` with Given/When/Then scenarios; classifies each as logic, interactive, or visual |
 | `/git-new` | Before file changes | Creates a `fix-*` or `feature-*` branch from the main branch |
 | `/tdd` | After `/git-new` | Writes tests first from the spec, implements the plan, and runs the suite green |
-| `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages (annotated desktop and mobile shots for every frontend change) and generates a markdown QA report |
+| `/qa-report` | After `/tdd` (or after direct implementation), before `/git-done` | Takes screenshots of affected pages (annotated desktop and mobile shots for every frontend change) runs code quality tools and a security review (`/security-review` + `/vibesec`) on the branch diff, and generates a markdown QA report |
 | `/qa-screencast` | Optional — alongside or after `/qa-report` | Records an animated GIF of a browser interaction via CDP screencast → `.reports/screencasts/<slug>.gif` |
 | `/git-done` | When work is complete | Merges the branch, pushes, and moves the Trello card to the next list |
 | `/trello-pipeline` | Instead of `/trello-next` when a whole set of plans should become cards and be worked off | Creates cards from `.plans/NN-*.md`, implements them one by one in subagents, reviews, merges and moves them to Fertig (see below) |
@@ -293,6 +293,18 @@ needed, so it works in WSL):
 - Versions are pinned at the top of the script. Chromium is linked at `~/.claude/tools/chromium`.
 - `/qa-report` uses them in this order: Chrome DevTools MCP, Playwright MCP, `qa-shot.mjs`, and
   Claude in Chrome only as a last resort (it cannot emulate a device).
+
+## Security review in `/qa-report`
+
+After the screenshots and code quality tools, `/qa-report` (Step 4.7) reviews the branch diff and writes a
+**Security** section into the report. It only reports; it never fixes.
+
+- `/security-review` (built-in) needs an `origin` remote (it reviews against `origin/HEAD`). Without a remote the row is
+  marked "No remote" and only `/vibesec` runs.
+- `/vibesec` is an optional third-party skill, not installed by `./install.sh`:
+  `git clone https://github.com/BehiSecc/VibeSec-Skill ~/.claude/skills/vibesec`. If it is missing, the row is ⚠️
+  with this hint.
+- Both are skipped when the branch changes no code files.
 
 ## What Gets Installed
 

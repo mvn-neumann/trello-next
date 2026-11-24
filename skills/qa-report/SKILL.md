@@ -1,6 +1,6 @@
 ---
 name: qa-report
-description: Verify implemented changes by navigating the dev site (and the live site for comparison, if reachable), taking annotated desktop and mobile screenshots for frontend changes, and writing a QA report. Use after code changes are done, before /git-done. Use when the user says "verify changes", "qa report", "/qa-report", "check changes", or "take screenshots".
+description: Verify implemented changes by navigating the dev site (and the live site for comparison, if reachable), taking annotated desktop and mobile screenshots for frontend changes, running code quality tools and a security review (/security-review and /vibesec) on the branch diff, and writing a QA report. Use after code changes are done, before /git-done. Use when the user says "verify changes", "qa report", "/qa-report", "check changes", or "take screenshots".
 model: sonnet
 ---
 
@@ -18,8 +18,10 @@ This skill verifies implemented changes by:
    that has both shots
 7. Running the project's code quality tools (PHPStan, PHPCS, PHP-CS-Fixer, Psalm, Rector,
    ESLint, Stylelint — whichever are configured) on the changed files
-8. Writing a short report in the user's language to `.reports/<branch-name>.md`, with embedded
-   before/after screenshots and the code quality results
+8. Running a security review of the branch diff: `/security-review` (built-in) and `/vibesec`
+   (secure-coding checklist, optional third-party skill)
+9. Writing a short report in the user's language to `.reports/<branch-name>.md`, with embedded
+   before/after screenshots, the code quality results and the security findings
 
 **This skill always produces `.reports/<branch-name>.md`.** No matter how Steps 1-4 go —
 missing plan file, no verification targets found, browser tool unavailable, dev/live site
@@ -35,7 +37,7 @@ this skill's execution, not an acceptable outcome.
 
 ## Flow Overview
 
-Steps 1 → 2 → 3 → 3.5 → 4 → 4.5 (close the browser) → 4.6 (code quality) → 5 → 6
+Steps 1 → 2 → 3 → 3.5 → 4 → 4.5 (close the browser) → 4.6 (code quality) → 4.7 (security review) → 5 → 6
 
 ## Instructions
 
@@ -632,6 +634,61 @@ Like every other step, a failure here never skips Step 5 — a tool that can't r
 Keep the trimmed output (first ~30 lines per failed/needs-review tool, `path:line` first) for
 the report.
 
+### Step 4.7: Security review
+
+Runs `/security-review` and `/vibesec` over the branch diff and feeds the findings into the
+**Security** section of the report (Step 5). Like every other step, a failure here never skips
+Step 5: a tool that can't run becomes a ⚠️ row, not an abort. **QA reports; it does not fix.**
+Never apply fixes suggested by either tool, and never edit code in this step.
+
+#### 4.7a — Scope
+
+Reuse the changed files from 4.6b (`git diff <defaultBranch>...<branch-name> --name-only`; if the
+branch hasn't diverged, `git diff HEAD --name-only` plus `git diff --cached --name-only`).
+If **no code file** changed (only docs, images, `.plans/`, `.specs/`, `.reports/` or similar),
+mark both tools ➖ **Skipped — no code changes** and go to Step 5.
+
+#### 4.7b — `/security-review`
+
+This built-in skill reviews the pending changes against `origin/HEAD`, so it needs a remote.
+
+1. Precheck:
+   ```bash
+   git rev-parse --verify --quiet origin/HEAD
+   ```
+   - Exit 0 → continue.
+   - Non-zero but `git remote get-url origin` works → run `git remote set-head origin -a`
+     **once**, then re-check. If it still fails, mark ⚠️ with the first error line.
+   - No `origin` remote (local mode) → mark ➖ **No remote — /security-review not run** and
+     rely on 4.7c.
+2. Invoke it with the `Skill` tool (`skill: "security-review"`). Collect each finding as
+   severity, `path:line` and a one-sentence description. Do not apply any fix it proposes.
+3. Classify: ✅ no findings / ❌ N findings / ⚠️ errored or could not finish (keep the first
+   error line).
+
+#### 4.7c — `/vibesec`
+
+A secure-coding checklist (access control, XSS, CSRF, secrets, open redirect, SSRF, uploads,
+SQL injection, …). It is an optional third-party skill, not installed by `install.sh`.
+
+1. If `~/.claude/skills/vibesec/SKILL.md` does not exist, mark ⚠️ **vibesec not installed** and
+   give the install hint in the report's Notes:
+   `git clone https://github.com/BehiSecc/VibeSec-Skill ~/.claude/skills/vibesec`. Continue.
+2. Otherwise invoke it with the `Skill` tool (`skill: "vibesec"`) to load the checklist, then
+   apply it to the branch diff (`git diff <defaultBranch>...<branch-name>`). Check only the
+   categories the diff touches, for example:
+   - forms, request handlers → CSRF, server-side validation, mass assignment
+   - templates, rendered output → XSS / output escaping
+   - controllers, queries, ids → access control, SQL injection
+   - uploads, redirects, outgoing requests → file validation, open redirect, SSRF
+   - committed files → secrets, keys, tokens
+3. Report **only** findings tied to a concrete changed line (`path:line`). No generic advice,
+   no findings in code the branch did not touch.
+4. Classify: ✅ no findings / ❌ N findings / ⚠️ could not run.
+
+Keep the findings short: `severity — path:line — one sentence`. When both tools flag the same
+line, list it once and name both tools.
+
 ### Step 5: Write the report
 
 **File path:** `.reports/<branch-name>.md`
@@ -688,6 +745,13 @@ mkdir -p .reports
   | findings | Funde |
   | Skipped — no matching changed files | Übersprungen — keine passenden geänderten Dateien |
   | _No code quality tools configured._ | _Keine Code-Qualitäts-Werkzeuge konfiguriert._ |
+  | Security | Sicherheit |
+  | Scope | Umfang |
+  | Skipped — no code changes | Übersprungen — keine Code-Änderungen |
+  | No remote — /security-review not run | Kein Remote — /security-review nicht ausgeführt |
+  | vibesec not installed | vibesec nicht installiert |
+  | _No code changes — security review skipped._ | _Keine Code-Änderungen — Sicherheitsprüfung übersprungen._ |
+  | _No security findings._ | _Keine Sicherheits-Funde._ |
   | Implementation Checklist | Umsetzungs-Checkliste |
   | Notes | Hinweise |
   | _Live site not available — dev-only capture._ | _Live-Seite nicht erreichbar — nur Dev-Aufnahme._ |
@@ -796,6 +860,30 @@ _No code quality tools configured._
 
 ---
 
+## Security
+
+| Tool | Scope | Result |
+|------|-------|--------|
+| /security-review | branch diff vs. `origin/HEAD` | ✅ Pass — 0 findings |
+| /vibesec | branch diff, 4 changed files | ❌ Fail — 1 finding |
+
+<one bullet per finding, most severe first:>
+
+- **High** — `app/src/ContactForm.php:58` — Form has no CSRF token check. _(vibesec)_
+- **Low** — `templates/Contact.ss:12` — User value printed unescaped. _(security-review, vibesec)_
+
+<when a tool did not run, put the reason in its Result cell, e.g.
+"➖ Skipped — No remote — /security-review not run" or "⚠️ Needs review — vibesec not installed"
+and add the install hint to Notes.>
+
+<when Step 4.7 found no code changes, write instead:>
+_No code changes — security review skipped._
+
+<when both tools ran and found nothing, the table is enough; add:>
+_No security findings._
+
+---
+
 ## Implementation Checklist
 
 <Copy the Steps section from the plan file verbatim, preserving - [x] / - [ ] state.
@@ -825,7 +913,12 @@ Results:
 ❌ 1 failed — <brief description of failure>
 ⚠️ 1 needs review — <brief description>
 🔍 Code quality: PHPStan ✅, Rector ❌ 2 findings
+🔒 Security: security-review ✅, vibesec ❌ 1 finding
 ```
+
+The `🔒` line lists `security-review` and `vibesec` with one marker each (`✅`, `❌ N findings`,
+`⚠️`, `➖`). Omit it only when Step 4.7 did not run at all. List each ❌ finding on a short
+line under the summary so the developer can act immediately.
 
 The `🔍` line lists every configured tool with one marker each — `✅`, `❌ N findings`, `⚠️`,
 or `➖` for skipped (e.g. `PHPStan ✅, Rector ➖`); omit the line entirely when no quality tools
@@ -909,5 +1002,9 @@ If the state file does not exist, skip this step silently.
 | No code quality tools detected (Step 4.6) | Log it, write `_No code quality tools configured._` in the report, continue |
 | Quality tool binary missing / `ddev` not running / timeout | Mark that tool ⚠️ Needs review with the first error line; do not retry in a loop; continue with the next tool and Step 5 |
 | Quality tool reports findings | Mark ❌ with the count and trimmed output; the report is still written and the screenshots results stand on their own |
+| No `origin` remote / `origin/HEAD` unresolvable (Step 4.7) | Mark `/security-review` ➖ "No remote — /security-review not run" (or ⚠️ with the first error line if the remote exists); still run `/vibesec`; continue |
+| `/vibesec` skill not installed (Step 4.7) | Mark ⚠️ "vibesec not installed", add `git clone https://github.com/BehiSecc/VibeSec-Skill ~/.claude/skills/vibesec` to Notes; continue |
+| `/security-review` or `/vibesec` errors out or times out | Mark that tool ⚠️ with the first error line; do not retry in a loop; continue with the other tool and Step 5 |
+| Security tool reports findings | Mark ❌ with the count and `path:line` list; do not fix anything; the report is still written and screenshot results stand on their own |
 | Trello attachment upload (curl) fails | Warn but don't abort — report file is still complete |
 | Any other failure that would otherwise abort the skill | Write the report first with whatever was gathered, THEN surface the error to the user — never let an error skip Step 5 |
