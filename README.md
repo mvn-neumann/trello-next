@@ -230,7 +230,10 @@ for a headless run. So a second session, a headless run and the watcher can neve
 a crashed or killed session frees the lock within 10 seconds: no clock, no 20-minute wait. The script writes
 `.plans/.trello-pipeline.owner` (pid, Claude pid, start time) and touches it every 10 seconds;
 `/trello-pipeline watch status` shows the lock and the beat age. Add `.plans/.trello-pipeline.owner` to the
-project's `.gitignore` unless all of `.plans/` is ignored. After updating, restart a loop that was started
+project's `.gitignore` unless all of `.plans/` is ignored. The script takes an optional name
+(`trello-pipeline-heartbeat.sh <root> [name]`, default `trello-pipeline`); `/todo-pipeline` uses
+`todo-pipeline` and so the files `.plans/.todo-pipeline.lock` and `.owner`. The two pipelines do not block
+each other. After updating, restart a loop that was started
 by an older version once: it holds no lock (until then the watcher still honours its `lastTickAt` for
 20 minutes).
 

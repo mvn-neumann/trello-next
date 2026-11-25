@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# trello-pipeline-heartbeat.sh — hold the pipeline lock of a project while a /trello-pipeline loop runs.
+# trello-pipeline-heartbeat.sh — hold the pipeline lock of a project while a pipeline loop runs.
 #
-# Usage: trello-pipeline-heartbeat.sh <project-root>
+# Usage: trello-pipeline-heartbeat.sh <project-root> [name]
+#
+# name = the pipeline: `trello-pipeline` (default) or `todo-pipeline`; lowercase letters and dashes.
 #
 # Started by the skill in the background (Bash run_in_background). It takes
-# <root>/.plans/.trello-pipeline.lock with flock, the same lock the cron watcher holds for a headless
-# run, so only one loop per project can exist, whoever starts it (session, headless, second session).
+# <root>/.plans/.<name>.lock with flock. For trello-pipeline this is the same lock the cron watcher
+# holds for a headless run, so only one loop per project and pipeline can exist, whoever starts it
+# (session, headless, second session). The two pipelines do not block each other.
 #
 # Output (first line, read by the skill):
 #   locked <pid>   the lock is ours, the loop may start
 #   busy           another loop holds the lock; exit code 3
 #
-# While it runs, it writes <root>/.plans/.trello-pipeline.owner ("<pid> <claudePid> <start time>") and
+# While it runs, it writes <root>/.plans/.<name>.owner ("<pid> <claudePid> <start time>") and
 # touches it every 10 s, so `watch status` can show the beat age. It exits, and the kernel frees the
 # lock, as soon as the Claude process that started it is gone or the owner file was deleted (the
 # skill's stop signal). The lock needs no clock, so a sleeping WSL VM does not make it stale.
@@ -20,11 +23,14 @@ set -euo pipefail
 
 BEAT_SECONDS="${TRELLO_PIPELINE_HEARTBEAT_SECONDS:-10}"
 
-[ "$#" -eq 1 ] && [ -d "$1" ] || { echo "Usage: $(basename "$0") <project-root>" >&2; exit 1; }
+usage() { echo "Usage: $(basename "$0") <project-root> [name]" >&2; exit 1; }
+{ [ "$#" -ge 1 ] && [ "$#" -le 2 ] && [ -d "$1" ]; } || usage
+NAME="${2:-trello-pipeline}"
+[[ "$NAME" =~ ^[a-z][a-z-]*$ ]] || { echo "Error: bad pipeline name: $NAME" >&2; exit 1; }
 ROOT="$(cd "$1" && pwd)"
 PLANS="$ROOT/.plans"
-LOCK="$PLANS/.trello-pipeline.lock"
-OWNER="$PLANS/.trello-pipeline.owner"
+LOCK="$PLANS/.$NAME.lock"
+OWNER="$PLANS/.$NAME.owner"
 mkdir -p "$PLANS"
 
 # find_claude_pid — the nearest ancestor process named `claude`; else the parent of this script.
