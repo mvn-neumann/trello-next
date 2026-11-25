@@ -11,6 +11,7 @@
 #   ~/.claude/scripts/trello-mcp.sh         (shared MCP launcher)
 #   ~/.claude/scripts/trello-attach.sh, trello-attachment-get.sh (plan/screenshot upload and download)
 #   ~/.claude/scripts/trello-pipeline-watch.sh (cron watcher: starts /trello-pipeline from a card comment)
+#   ~/.claude/scripts/trello-pipeline-heartbeat.sh (holds the per-project loop lock while /trello-pipeline runs)
 #
 # Per-project setup (manual):
 #   .mcp.json  — add the trello MCP server entry
@@ -55,6 +56,8 @@ cp "$SCRIPT_DIR/scripts/trello-attachment-get.sh" "$CLAUDE_DIR/scripts/trello-at
 chmod +x "$CLAUDE_DIR/scripts/trello-attachment-get.sh"
 cp "$SCRIPT_DIR/scripts/trello-pipeline-watch.sh" "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
 chmod +x "$CLAUDE_DIR/scripts/trello-pipeline-watch.sh"
+cp "$SCRIPT_DIR/scripts/trello-pipeline-heartbeat.sh" "$CLAUDE_DIR/scripts/trello-pipeline-heartbeat.sh"
+chmod +x "$CLAUDE_DIR/scripts/trello-pipeline-heartbeat.sh"
 
 # Browser tools for /qa-report (Playwright MCP, Chrome DevTools MCP, qa-shot.mjs).
 # Skipped when SKIP_BROWSER_TOOLS=1 (needs node/npx, the claude CLI and a ~130 MB download).
@@ -79,6 +82,7 @@ echo "  ~/.claude/scripts/trello-env.sh"
 echo "  ~/.claude/scripts/trello-attach.sh"
 echo "  ~/.claude/scripts/trello-attachment-get.sh"
 echo "  ~/.claude/scripts/trello-pipeline-watch.sh"
+echo "  ~/.claude/scripts/trello-pipeline-heartbeat.sh"
 echo ""
 echo "Per-project setup:"
 echo "  1. Add Trello credentials to your project's .env or _ss_environment.php:"

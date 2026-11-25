@@ -125,6 +125,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
   "maxFailedReviews": 3,
   "separateCodeReview": "auto",
   "lastTickAt": "2026-10-24T20:15:00Z",
+  "heartbeatShellId": "…",
   "cards": {
     "01": {
       "title": "Commit data layer",
@@ -160,7 +161,7 @@ Written by the orchestrator only. Create `.plans/` if missing. Read it before ev
 `agentId`: the agent running now (or `ci:<shell id>` for a background `make ci` of the inline merge). `implAgentId`: the card's implement agent, kept for fix runs (see "Implement subagent"); reset to `null` when the card reaches Fertig.
 `triageStage` (only while `triaging`): `triage` (one triage agent; legacy values `solve`/`source`/`decide` mean `triage`). `triageSource`: `review` (failed review) or `gate` (implementer decision gate). `triageDone`: triage has run for the current failure (reset to `false` whenever a review fails; a missing field counts as `false`). `autoAttempts`: automatic fix runs triggered by triage (including automatic decisions) for this card (max 2; reset to 0 when the card reaches Fertig or the user comments an instruction). `autoDecideCommentId`: id of the bot comment `Triage: automatisch entschieden und behoben`; the user may veto the decision with a comment newer than it until the card is merged (see `tick` case 3; reset to `null` when the card reaches Fertig or the veto was taken).
 `maxFailedReviews`: failed reviews per card before the loop stops and asks (see "Blocking"); missing = 3. Set it per project by hand.
-`lastTickAt`: UTC time of the last `tick` start (the heartbeat). A value younger than 20 min means a loop of this project is running; missing = no loop.
+`lastTickAt`: UTC time of the last `tick` start. Information only (shown by `watch status`); the real heartbeat is the lock `.plans/.trello-pipeline.lock`, held by the background script `trello-pipeline-heartbeat.sh` while a loop runs (`.plans/.trello-pipeline.owner` holds its pid, the Claude pid and the start time and is touched every 10 s). A free lock means no loop. Only the watcher still reads `lastTickAt`, as a fallback for a loop of an older skill version (no owner file). `heartbeatShellId`: id of the background shell that runs the heartbeat script (`null` when no loop runs, and in headless runs).
 `headCommit` = branch tip after the implementer; `reviewedCommit` = branch tip of the last failed review (basis of the delta review in later rounds, `null` before the first failure); `mergedCommit` = default-branch tip after the fast-forward merge (set only after a passed review).
 
 ## `status`
@@ -245,15 +246,20 @@ For a machine without `.plans/` (or without the state file). Never invents a pla
 
 ## Start the loop
 
-**Heartbeat check first.** If `lastTickAt` in the state file is younger than 20 min, another session of this project runs the loop: do not start; tell the user (start anyway only if the user confirms that no other session runs). Otherwise clear every `agentId` in the state file: it belongs to a session that is gone, and the resync of the first tick treats its card as interrupted (`implementing`/`reviewing` with no agent → resync as in the table, `inProgress` → `todo`, resumed by a new implement subagent).
+**Heartbeat lock first.** One loop per project: the loop holds `.plans/.trello-pipeline.lock` (the same lock the cron watcher holds for a headless run) through a small background script, so a crashed or killed session frees it within 10 s, and a sleeping machine never makes it look dead. A headless run (`TRELLO_PIPELINE_HEADLESS=1`) already holds the lock through the watcher: skip this step and the heartbeat script there.
 
-Invoke the Skill tool: `skill: "loop"`, `args: "/trello-pipeline tick"` (no interval → dynamic, self-paced). Tell the user the loop is running and how to stop it (`ScheduleWakeup stop`, or ask you).
+Start it with the Bash tool, `run_in_background: true`: `bash ~/.claude/scripts/trello-pipeline-heartbeat.sh "$PWD"`, and read its first output line (the Bash result or `BashOutput` of that shell):
 
-**Whenever the loop ends** (every `ScheduleWakeup { stop: true }`, also when the user asks to stop), set `lastTickAt` to `null` first, so the watcher and other sessions see at once that no loop runs.
+- `busy` → another session or a headless run of this project holds the loop: do not start; tell the user. There is no "start anyway": the lock decides. (If the user knows the holder is gone, the lock is free by itself within 10 s; a stuck lock means a live process, see `watch status`.)
+- `locked <pid>` → store the shell id as `heartbeatShellId` in the state file. Then clear every `agentId` in the state file: it belongs to a session that is gone, and the resync of the first tick treats its card as interrupted (`implementing`/`reviewing` with no agent → resync as in the table, `inProgress` → `todo`, resumed by a new implement subagent).
+
+Invoke the Skill tool: `skill: "loop"`, `args: "/trello-pipeline tick"` (no interval → dynamic, self-paced). Tell the user the loop is running and how to stop it (`ScheduleWakeup stop`, or ask you). A loop started by an older version of this skill holds no lock; restart it once after the update.
+
+**Whenever the loop ends** (every `ScheduleWakeup { stop: true }`, also when the user asks to stop), first stop the heartbeat (`TaskStop` on `heartbeatShellId`; deleting `.plans/.trello-pipeline.owner` also makes the script exit within 10 s), then set `heartbeatShellId` and `lastTickAt` to `null`, so the watcher and other sessions can start a loop at once.
 
 ## `tick` — one loop step
 
-First write `lastTickAt` (current UTC time, ISO 8601) to the state file — in every tick, case 1 included; it is the heartbeat the watcher and other sessions check. Then run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
+First write `lastTickAt` (current UTC time, ISO 8601) to the state file — in every tick, case 1 included; it is information for `status` and for loops of the old skill, the lock is the real heartbeat. Check the heartbeat: if `.plans/.trello-pipeline.owner` is missing or its first number (the script's pid) is not alive (`kill -0`), start the heartbeat script again as in "Start the loop". It answers `busy` → another session took the loop: end this loop at once (`ScheduleWakeup { stop: true }`, nothing else touched) and tell the user. (Headless: nothing to check, the watcher holds the lock.) Then run S1 and S3 quickly (board check, list ids; use cached values from the state file for the rest), then **resync**:
 
 Only the cards of the state file are looked at (never the rest of the board). Cards with `status: done` are skipped (no call; a card that turns out archived or moved out of the done list later is not this loop's business). For every other card in the state file call `get_card` (parallel); an archived (`closed`) card counts as `done`. Update `status` from reality, **except** `implementing`/`reviewing` (owned by a running agent), then run the **label sync** (S2) for each card whose labels do not match yet (a card set to Fertig by hand gets `Gemergt`; a missing `labels` map in an old state file → run S2 first):
 
@@ -594,7 +600,7 @@ A run is headless when `printenv TRELLO_PIPELINE_HEADLESS` prints `1` (only the 
 
 `watch on` adds one crontab line for this project (every 5 min, tagged `# trello-pipeline-watch <project root>`), checks at once with the same rules and, if a card needs the pipeline, starts the headless run right away (detached, so it outlives this session); `off` removes exactly that line. Every 5 min the script (no Claude cost unless it starts):
 
-1. exits if `.plans/.trello-pipeline.lock` is held (a headless run is still going) or `lastTickAt` is younger than 20 min (a session runs the loop);
+1. exits if `.plans/.trello-pipeline.lock` is held (a headless run or a session loop is still going; a session loop holds it through its heartbeat script). Only for a loop of an older skill version (no owner file) a `lastTickAt` younger than 20 min still counts;
 2. reads **only this project's cards** (the cards of its state file that are not `done`, plus the index card, one small request each; never the whole board) — **Trello wins** over the state file (the `Blockiert` label and the list come from Trello; differences are logged). An archived card counts as done;
 3. starts `claude -p "/trello-pipeline"` headless (clean environment, no `ANTHROPIC_API_KEY`, `--permission-mode bypassPermissions`, 12 h timeout) when a blocked card has a comment without the bot marker newer than its block comment (or the label, if set by hand), a card has a veto comment newer than `autoDecideCommentId`, or a card is ready (review list, or todo/In Arbeit without the label and all `dependsOn` in Fertig);
 4. turns itself off when every card, the index card included, is in Fertig.
@@ -609,7 +615,8 @@ Log: `.plans/.trello-pipeline-watch.log` (decisions, start, exit code, cost); th
 |-----------|--------|
 | Active Trello board ≠ project board | Abort as in `/trello-next` Step 1a; never `set_active_board` |
 | `done` list not resolvable | Ask with `AskUserQuestion`, offer to add `done` to `.claude/trello-lists.json` (headless: end the loop, no question) |
-| `lastTickAt` younger than 20 min on start | Another session runs the loop: do not start, tell the user |
+| Heartbeat script answers `busy` on start | Another session or a headless run holds the loop: do not start, tell the user |
+| Heartbeat script answers `busy` in a tick | Another session took the loop: end this loop (`ScheduleWakeup { stop: true }`), tell the user |
 | Plan lacks Acceptance Criteria | Still create the card; the implement subagent generates them (4c, no gate) |
 | Card creation fails midway | State file already holds the created cards; fix the cause and re-run `setup` (idempotent) |
 | `get_my_cards` / list reads lag after `move_card` | Trust the state file and the `get_card` of that single card, not list listings |

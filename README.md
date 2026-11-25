@@ -218,11 +218,21 @@ project (`trello-pipeline-watch.sh run <root>`, every 5 minutes) and checks at o
 headless run starts right away. Without Claude cost it checks the board
 (Trello wins over the state file) and starts `claude -p "/trello-pipeline"` headless when a blocked card
 has a new comment of yours, a veto comment arrives, or a card is ready while no loop runs. It never runs
-next to a running loop (lock file plus the `lastTickAt` heartbeat, 20 minutes), stops when only blocked
+next to a running loop (see "One loop per project" below), stops when only blocked
 cards remain, and removes its own crontab line when every card is in "Fertig". `watch off` removes it by
 hand. Each project has its own line, lock and log (`.plans/.trello-pipeline-watch.log`), so several
 projects can be watched side by side; they share your Claude usage limit. Note: turning it on while a card
 is ready starts the pipeline immediately; on WSL, cron only runs while the WSL VM is up.
+
+**One loop per project (heartbeat lock).** A running loop holds `.plans/.trello-pipeline.lock` through a small
+background script (`trello-pipeline-heartbeat.sh`, started by the skill). The watcher holds the same lock
+for a headless run. So a second session, a headless run and the watcher can never start a second loop, and
+a crashed or killed session frees the lock within 10 seconds: no clock, no 20-minute wait. The script writes
+`.plans/.trello-pipeline.owner` (pid, Claude pid, start time) and touches it every 10 seconds;
+`/trello-pipeline watch status` shows the lock and the beat age. Add `.plans/.trello-pipeline.owner` to the
+project's `.gitignore` unless all of `.plans/` is ignored. After updating, restart a loop that was started
+by an older version once: it holds no lock (until then the watcher still honours its `lastTickAt` for
+20 minutes).
 
 **Several projects on one board.** Each project has a `projectKey` (state file; default: the folder name of
 the git root). Its cards get the project label (`projectKey`, black) and the name prefix
@@ -334,6 +344,7 @@ After the screenshots and code quality tools, `/qa-report` (Step 4.7) reviews th
     ├── trello-env.sh             # Shared credential resolver, sourced by trello-mcp.sh and skills
     ├── trello-attach.sh          # Uploads a file as a card attachment (multipart, --replace, header auth)
     ├── trello-attachment-get.sh  # Downloads a card attachment by name (used to restore plan files)
+    ├── trello-pipeline-heartbeat.sh  # Holds the per-project loop lock while /trello-pipeline runs
     └── trello-pipeline-watch.sh  # Cron watcher: starts /trello-pipeline headless from a card comment
 ```
 

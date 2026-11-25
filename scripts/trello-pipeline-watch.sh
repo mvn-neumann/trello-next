@@ -6,12 +6,12 @@
 #   on      add this project's crontab line (every 5 min `run`; running it twice adds nothing),
 #           check at once and start the run right away if a card needs it
 #   off     remove exactly this project's crontab line (tagged "# trello-pipeline-watch <root>")
-#   status  on/off, lastTickAt of the state file, last log lines
+#   status  on/off, lock state and heartbeat age, lastTickAt of the state file, last log lines
 #   run     the cron step: cheap checks, and only if a card needs the pipeline start
 #           `claude -p "/trello-pipeline"` (TRELLO_PIPELINE_HEADLESS=1) while holding the lock
 #
-# `run` starts the pipeline when, with no pipeline running (lock free, lastTickAt older than
-# TRELLO_PIPELINE_WATCH_STALE_MIN, default 20 min):
+# `run` starts the pipeline when, with no pipeline running (lock free; every loop, session or
+# headless, holds .plans/.trello-pipeline.lock, see trello-pipeline-heartbeat.sh):
 #   - a blocked card (Blockiert label on Trello) or a card with autoDecideCommentId has a comment
 #     without the bot marker that is newer than the reference (bot comment / label added), or
 #   - a card is ready: in the review list, or in todo/inProgress without the label and all
@@ -21,7 +21,12 @@
 # Only this project's cards are read: those of its own state file that are not done (plus the index
 # card), one small GET each. Other projects' cards on the same board are never fetched.
 #
-# Files (per project, in <root>/.plans/): .trello-pipeline.lock, .trello-pipeline-watch.log,
+# Fallback for one version: a loop of the old skill holds no lock. Only when there is no owner file
+# (.trello-pipeline.owner) a lastTickAt younger than TRELLO_PIPELINE_WATCH_STALE_MIN (default 20 min)
+# still counts as a running loop. Remove it once every project has restarted its loop.
+#
+# Files (per project, in <root>/.plans/): .trello-pipeline.lock, .trello-pipeline.owner (written by the
+# heartbeat script, touched every 10 s), .trello-pipeline-watch.log,
 # .trello-pipeline-watch.last (last decision, to keep the log short), .trello-pipeline-watch-run.json
 # (JSON output of the last headless run).
 #
@@ -53,6 +58,8 @@ CRON_LINE="*/5 * * * * $SCRIPT_PATH run $ROOT $MARKER"
 PLANS="$ROOT/.plans"
 STATE="$PLANS/.trello-pipeline.json"
 LOG="$PLANS/.trello-pipeline-watch.log"
+LOCK="$PLANS/.trello-pipeline.lock"
+OWNER="$PLANS/.trello-pipeline.owner"
 LAST="$PLANS/.trello-pipeline-watch.last"
 DRY="${TRELLO_PIPELINE_WATCH_DRY:-0}"
 
@@ -139,6 +146,15 @@ watch_off() {
 
 watch_status() {
   if is_on; then echo "Watcher: on"; else echo "Watcher: off"; fi
+  if [ -f "$LOCK" ] && ! flock -n "$LOCK" true; then
+    if [ -f "$OWNER" ]; then
+      echo "Lock: held (owner: $(cat "$OWNER"), last beat $(( $(date +%s) - $(stat -c %Y "$OWNER") )) s ago)"
+    else
+      echo "Lock: held (headless run or old loop, no owner file)"
+    fi
+  else
+    echo "Lock: free"
+  fi
   if [ -f "$STATE" ]; then
     python3 -I -c 'import json,sys; print("lastTickAt:", json.load(open(sys.argv[1])).get("lastTickAt") or "–")' "$STATE"
   else
@@ -157,7 +173,7 @@ decide() {
       . "$SCRIPT_DIR/trello-env.sh"
       trello_env_load "$ROOT" >/dev/null || exit 1
     fi
-    python3 -I - "$STATE" <<'PY'
+    python3 -I - "$STATE" "$OWNER" <<'PY'
 import concurrent.futures, datetime, json, os, sys, urllib.request
 
 BOT = "🤖 trello-pipeline ·"
@@ -178,7 +194,8 @@ def actions(card_id):
     return get(f"/cards/{card_id}/actions?filter=commentCard,addLabelToCard&limit=200")
 
 tick = state.get("lastTickAt")
-if tick:
+# Fallback for loops of the old skill (no lock, no owner file); a loop with an owner file is covered by the lock.
+if tick and not os.path.exists(sys.argv[2]):
     age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(tick.replace("Z", "+00:00"))
     if age < datetime.timedelta(minutes=stale_min):
         print(f"skip Pipeline läuft (lastTickAt {tick})")
